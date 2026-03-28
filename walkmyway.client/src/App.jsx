@@ -230,6 +230,7 @@ export default function App() {
     // Touch drag-and-drop for iOS Safari (HTML5 drag API is not supported on iPhone)
     // touch-action:none on the handle prevents scroll interference.
     const handleTouchStart = useCallback((e, index) => {
+        e.preventDefault(); // prevents iOS text selection on touch
         dragIndexRef.current = index;
     }, []);
 

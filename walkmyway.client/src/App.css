@@ -394,6 +394,8 @@
 
 .wmw-pref-row-draggable {
     cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .wmw-pref-row-draggable:active {
@@ -408,6 +410,8 @@
     flex-shrink: 0;
     touch-action: none; /* prevents page scroll on iOS when dragging */
     cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .wmw-prefs-empty {
