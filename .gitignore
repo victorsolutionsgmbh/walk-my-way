@@ -1,0 +1,12 @@
+﻿################################################################################
+# Diese .gitignore-Datei wurde von Microsoft(R) Visual Studio automatisch erstellt.
+################################################################################
+
+/.claude
+/.vs
+/walkmyway.client/obj/Debug
+/walkmyway.client/package-lock.json
+/WalkMyWay.Server/bin/Debug/net8.0
+/WalkMyWay.Server/obj
+/WalkMyWay.Server/Properties/launchSettings.json
+/WalkMyWay.Server/appsettings.Development.json
