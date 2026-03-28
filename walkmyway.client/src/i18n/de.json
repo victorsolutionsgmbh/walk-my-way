@@ -5,6 +5,8 @@
   },
   "location": {
     "loading": "Standort wird ermittelt\u2026",
+    "grant_access": "Standortzugriff erlauben",
+    "grant_access_body": "Tippe auf den Button, um deinen Standort freizugeben und Routen in deiner N\u00e4he zu finden.",
     "card_title": "Dein Standort",
     "current_position": "Aktueller Standort",
     "unavailable_title": "Standort nicht verf\u00fcgbar",
@@ -69,5 +71,52 @@
     "unavailable_title": "In deiner Region nicht verf\u00fcgbar",
     "unavailable_body": "Walk My Way ist derzeit nur in \u00d6sterreich verf\u00fcgbar. Wir arbeiten daran, das Tool bald in weiteren Regionen anzubieten."
   },
-  "footer": "© {{year}} Victorsolutions GmbH"
+  "footer": {
+    "copyright": "\u00a9 {{year}} Victorsolutions GmbH",
+    "imprint": "Impressum",
+    "privacy": "Datenschutz"
+  },
+  "imprint": {
+    "title": "Impressum",
+    "close": "Schlie\u00dfen",
+    "operator_section": "Angaben zum Betreiber",
+    "company": "Victorsolutions GmbH",
+    "owner": "Inhaber: Jaspal Victor",
+    "street": "Diepoldplatz 6/21",
+    "city": "1170 Wien",
+    "country": "\u00d6sterreich",
+    "contact_section": "Kontakt",
+    "email_label": "E-Mail",
+    "email": "office@victorsolutions.at",
+    "vat_section": "Umsatzsteuer-ID",
+    "vat": "ATU81432745",
+    "register_section": "Firmenbuch Nummer",
+    "register": "FN642579w",
+    "profession_section": "Berufsbezeichnung und berufsrechtliche Regelungen",
+    "chamber": "Kammerzugeh\u00f6rigkeit: Wirtschaftskammer Wien",
+    "trade_group": "Fachgruppe: Dienstleistungen in der automatischen Datenverarbeitung und Informationstechnik",
+    "profession": "Berufsgruppe: Informationstechnologie",
+    "court": "Registriert am Handelsgericht Wien",
+    "liability_content_section": "Haftung f\u00fcr Inhalte",
+    "liability_content_p1": "Als Diensteanbieter sind wir gem\u00e4\u00df \u00a7 7 Abs.1 TMG f\u00fcr eigene Inhalte auf diesen Seiten nach den allgemeinen Gesetzen verantwortlich. Nach \u00a7\u00a7 8 bis 10 TMG sind wir als Diensteanbieter jedoch nicht verpflichtet, \u00fcbermittelte oder gespeicherte fremde Informationen zu \u00fcberwachen oder nach Umst\u00e4nden zu forschen, die auf eine rechtswidrige T\u00e4tigkeit hinweisen.",
+    "liability_content_p2": "Verpflichtungen zur Entfernung oder Sperrung der Nutzung von Informationen nach den allgemeinen Gesetzen bleiben hiervon unber\u00fchrt. Eine diesbez\u00fcgliche Haftung ist jedoch erst ab dem Zeitpunkt der Kenntnis einer konkreten Rechtsverletzung m\u00f6glich. Bei Bekanntwerden von entsprechenden Rechtsverletzungen werden wir diese Inhalte umgehend entfernen.",
+    "liability_links_section": "Haftung f\u00fcr Links",
+    "liability_links_p1": "Unser Angebot enth\u00e4lt Links zu externen Websites Dritter, auf deren Inhalte wir keinen Einfluss haben. Deshalb k\u00f6nnen wir f\u00fcr diese fremden Inhalte auch keine Gew\u00e4hr \u00fcbernehmen. F\u00fcr die Inhalte der verlinkten Seiten ist stets der jeweilige Anbieter oder Betreiber der Seiten verantwortlich. Die verlinkten Seiten wurden zum Zeitpunkt der Verlinkung auf m\u00f6gliche Rechtsverst\u00f6\u00dfe \u00fcberpr\u00fcft. Rechtswidrige Inhalte waren zum Zeitpunkt der Verlinkung nicht erkennbar.",
+    "liability_links_p2": "Eine permanente inhaltliche Kontrolle der verlinkten Seiten ist jedoch ohne konkrete Anhaltspunkte einer Rechtsverletzung nicht zumutbar. Bei Bekanntwerden von Rechtsverletzungen werden wir derartige Links umgehend entfernen.",
+    "copyright_section": "Urheberrecht",
+    "copyright_p1": "Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten unterliegen dem Urheberrecht. Die Vervielf\u00e4ltigung, Bearbeitung, Verbreitung und jede Art der Verwertung au\u00dferhalb der Grenzen des Urheberrechtes bed\u00fcrfen der schriftlichen Zustimmung des jeweiligen Autors bzw. Erstellers. Downloads und Kopien dieser Seite sind nur f\u00fcr den privaten, nicht kommerziellen Gebrauch gestattet.",
+    "copyright_p2": "Soweit die Inhalte auf dieser Seite nicht vom Betreiber erstellt wurden, werden die Urheberrechte Dritter beachtet. Insbesondere werden Inhalte Dritter als solche gekennzeichnet. Sollten Sie trotzdem auf eine Urheberrechtsverletzung aufmerksam werden, bitten wir um einen entsprechenden Hinweis. Bei Bekanntwerden von Rechtsverletzungen werden wir derartige Inhalte umgehend entfernen."
+  },
+  "privacy": {
+    "title": "Datenschutzerkl\u00e4rung",
+    "close": "Schlie\u00dfen",
+    "license_section": "Lizenz",
+    "license_body": "Diese Anwendung wird unter der Apache License 2.0 bereitgestellt. Sie wird ohne jegliche Gew\u00e4hrleistung oder Bedingungen bereitgestellt, weder ausdr\u00fccklich noch stillschweigend. Weitere Informationen entnehmen Sie bitte der Apache License 2.0.",
+    "cloudflare_section": "Infrastruktur & Daten\u00fcbermittlung",
+    "cloudflare_body": "Diese Website wird durch den DNS-Proxy-Dienst von Cloudflare gesch\u00fctzt. Dadurch k\u00f6nnen Website-Metadaten (wie IP-Adressen und Anfrage-Header) im Rahmen der globalen Netzwerkinfrastruktur von Cloudflare \u00fcber Server in den Vereinigten Staaten geleitet werden. Dies ist eine Standard-Sicherheits- und Leistungsma\u00dfnahme. Details entnehmen Sie bitte der Datenschutzerkl\u00e4rung von Cloudflare unter cloudflare.com.",
+    "tracking_section": "Kein Tracking, keine Cookies",
+    "tracking_body": "Diese Anwendung verwendet keinerlei Tracking-Technologien, Analysedienste oder Cookies. Es werden keine personenbezogenen Daten erhoben, gespeichert oder verarbeitet, \u00fcber das technisch notwendige Ma\u00df zur Auslieferung der Anwendung hinaus.",
+    "data_section": "Routendaten",
+    "data_body": "Routenanfragen, die \u00fcber diese Anwendung \u00fcbermittelt werden (einschlie\u00dflich Standort und Ziel), werden ausschlie\u00dflich zur Berechnung und Ausgabe der Gehroute in Echtzeit verwendet. Es werden keine Routendaten nach der Antwort auf unseren Servern gespeichert, protokolliert oder aufbewahrt."
+  }
 }

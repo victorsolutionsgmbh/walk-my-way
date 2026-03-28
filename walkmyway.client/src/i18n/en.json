@@ -5,6 +5,8 @@
   },
   "location": {
     "loading": "Requesting your location\u2026",
+    "grant_access": "Allow Location Access",
+    "grant_access_body": "Tap the button below to share your location and find routes near you.",
     "card_title": "Your Location",
     "current_position": "Current Position",
     "unavailable_title": "Location Unavailable",
@@ -69,5 +71,52 @@
     "unavailable_title": "Not Available in Your Region",
     "unavailable_body": "Walk My Way is currently only available in Austria. We\u2019re working on expanding to more regions soon."
   },
-  "footer": "© {{year}} Victorsolutions GmbH"
+  "footer": {
+    "copyright": "\u00a9 {{year}} Victorsolutions GmbH",
+    "imprint": "Imprint",
+    "privacy": "Privacy Policy"
+  },
+  "imprint": {
+    "title": "Imprint",
+    "close": "Close",
+    "operator_section": "Operator Information",
+    "company": "Victorsolutions GmbH",
+    "owner": "Owner: Jaspal Victor",
+    "street": "Diepoldplatz 6/21",
+    "city": "1170 Vienna",
+    "country": "Austria",
+    "contact_section": "Contact",
+    "email_label": "Email",
+    "email": "office@victorsolutions.at",
+    "vat_section": "VAT ID",
+    "vat": "ATU81432745",
+    "register_section": "Company Register Number",
+    "register": "FN642579w",
+    "profession_section": "Professional Title and Regulations",
+    "chamber": "Chamber membership: Wirtschaftskammer Wien",
+    "trade_group": "Trade group: Services in Automatic Data Processing and Information Technology",
+    "profession": "Professional category: Information Technology",
+    "court": "Registered at the Commercial Court Vienna",
+    "liability_content_section": "Liability for Content",
+    "liability_content_p1": "As a service provider, we are responsible for our own content on these pages in accordance with general law pursuant to \u00a7 7 para. 1 TMG. However, pursuant to \u00a7\u00a7 8 to 10 TMG, we are not obligated as a service provider to monitor transmitted or stored third-party information or to investigate circumstances that indicate illegal activity.",
+    "liability_content_p2": "Obligations to remove or block the use of information under general law remain unaffected. However, liability in this regard is only possible from the time of knowledge of a specific legal violation. Upon becoming aware of such violations, we will remove this content immediately.",
+    "liability_links_section": "Liability for Links",
+    "liability_links_p1": "Our website contains links to external websites of third parties over whose content we have no influence. Therefore, we cannot assume any liability for these external contents. The respective provider or operator of the linked pages is always responsible for the content of those pages. The linked pages were checked for possible legal violations at the time of linking. Illegal content was not recognisable at the time of linking.",
+    "liability_links_p2": "However, permanent monitoring of the content of linked pages is not reasonable without concrete evidence of a legal violation. Upon becoming aware of legal violations, we will remove such links immediately.",
+    "copyright_section": "Copyright",
+    "copyright_p1": "The content and works created by the site operators on these pages are subject to copyright law. Reproduction, editing, distribution and any kind of use outside the limits of copyright law require the written consent of the respective author or creator. Downloads and copies of this page are only permitted for private, non-commercial use.",
+    "copyright_p2": "Where content on this site was not created by the operator, the copyrights of third parties are respected. In particular, third-party content is identified as such. Should you nevertheless become aware of a copyright infringement, please inform us accordingly. Upon becoming aware of legal violations, we will remove such content immediately."
+  },
+  "privacy": {
+    "title": "Privacy Policy",
+    "close": "Close",
+    "license_section": "License",
+    "license_body": "This application is provided under the Apache License 2.0. It is distributed on an \"AS IS\" basis, without warranties or conditions of any kind, either express or implied. See the Apache License 2.0 for the specific language governing permissions and limitations.",
+    "cloudflare_section": "Infrastructure & Data Transfer",
+    "cloudflare_body": "This website is protected by Cloudflare\u2019s DNS proxy service. As a result, website metadata (such as IP addresses and request headers) may be routed through servers located in the United States as part of Cloudflare\u2019s global network infrastructure. This is a standard security and performance measure. For details, please refer to Cloudflare\u2019s Privacy Policy at cloudflare.com.",
+    "tracking_section": "No Tracking or Cookies",
+    "tracking_body": "This application does not use any tracking technologies, analytics services, or cookies. No personal data is collected, stored, or processed beyond what is technically necessary to serve the application.",
+    "data_section": "Route Data",
+    "data_body": "Route queries submitted through this application (including your location and destination) are used solely to calculate and return your walking route in real time. No route data is stored, logged, or retained on our servers after the response is delivered."
+  }
 }

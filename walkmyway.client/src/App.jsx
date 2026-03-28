@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import { useTranslation } from './i18n/TranslationContext.jsx';
+import ImprintModal from './ImprintModal.jsx';
+import PrivacyModal from './PrivacyModal.jsx';
 
 const PREFERENCE_VALUES = [
     { value: 'cafe' },
@@ -49,6 +51,8 @@ export default function App() {
     const [suggestions, setSuggestions]       = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [autocompleteLoading, setAutocompleteLoading] = useState(false);
+    const [showImprint, setShowImprint] = useState(false);
+    const [showPrivacy, setShowPrivacy]  = useState(false);
     const [preferences, setPreferences]       = useState([]);
     const [preserveOrder, setPreserveOrder]   = useState(false);
     const [isLoading, setIsLoading]           = useState(false);
@@ -69,6 +73,10 @@ export default function App() {
             .then(data => setRegionState(data.allowed ? 'allowed' : 'blocked'))
             .catch(() => setRegionState('allowed')); // network error → don't block
     }, []);
+
+    // ── iOS detection (requires user-gesture for geolocation prompt) ────────────
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
     // ── Geolocation ─────────────────────────────────────────────────────────────
     const resolvePosition = useCallback((position) => {
@@ -120,8 +128,8 @@ export default function App() {
     }, [resolvePosition, t]);
 
     useEffect(() => {
-        if (regionState === 'allowed') requestLocation();
-    }, [regionState, requestLocation]);
+        if (regionState === 'allowed' && !isIOS) requestLocation();
+    }, [regionState, requestLocation, isIOS]);
 
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -298,7 +306,17 @@ export default function App() {
                         <p className="wmw-denied-body">{t('region.unavailable_body')}</p>
                     </div>
                 </main>
-                <footer className="wmw-footer"><div className="wmw-footer-inner">{t('footer', { year: new Date().getFullYear() })}</div></footer>
+                <footer className="wmw-footer">
+                <div className="wmw-footer-inner">
+                    <span>{t('footer.copyright', { year: new Date().getFullYear() })}</span>
+                    <div className="wmw-footer-links">
+                        <button className="wmw-footer-link" onClick={() => setShowPrivacy(true)}>{t('footer.privacy')}</button>
+                        <button className="wmw-footer-link" onClick={() => setShowImprint(true)}>{t('footer.imprint')}</button>
+                    </div>
+                </div>
+                {showPrivacy && <PrivacyModal onClose={() => setShowPrivacy(false)} />}
+                {showImprint && <ImprintModal onClose={() => setShowImprint(false)} />}
+            </footer>
             </div>
         );
     }
@@ -322,6 +340,21 @@ export default function App() {
             </header>
 
             <main className="wmw-main">
+                {locationState === 'idle' && (
+                    <div className="wmw-card wmw-card-denied">
+                        <div className="wmw-denied-icon">
+                            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                                <path d="M24 4C16.27 4 10 10.27 10 18C10 28.5 24 44 24 44C24 44 38 28.5 38 18C38 10.27 31.73 4 24 4ZM24 23C21.24 23 19 20.76 19 18C19 15.24 21.24 13 24 13C26.76 13 29 15.24 29 18C29 20.76 26.76 23 24 23Z" fill="#2563eb" />
+                            </svg>
+                        </div>
+                        <h2 className="wmw-denied-title">{t('location.grant_access')}</h2>
+                        <p className="wmw-denied-body">{t('location.grant_access_body')}</p>
+                        <button className="wmw-btn wmw-btn-primary" onClick={requestLocation}>
+                            {t('location.grant_access')}
+                        </button>
+                    </div>
+                )}
+
                 {locationState === 'loading' && (
                     <div className="wmw-card wmw-card-center">
                         <div className="wmw-spinner" />
@@ -583,7 +616,17 @@ export default function App() {
                 )}
             </main>
 
-            <footer className="wmw-footer"><div className="wmw-footer-inner">{t('footer', { year: new Date().getFullYear() })}</div></footer>
+            <footer className="wmw-footer">
+                <div className="wmw-footer-inner">
+                    <span>{t('footer.copyright', { year: new Date().getFullYear() })}</span>
+                    <div className="wmw-footer-links">
+                        <button className="wmw-footer-link" onClick={() => setShowPrivacy(true)}>{t('footer.privacy')}</button>
+                        <button className="wmw-footer-link" onClick={() => setShowImprint(true)}>{t('footer.imprint')}</button>
+                    </div>
+                </div>
+                {showPrivacy && <PrivacyModal onClose={() => setShowPrivacy(false)} />}
+                {showImprint && <ImprintModal onClose={() => setShowImprint(false)} />}
+            </footer>
         </div>
     );
 }
