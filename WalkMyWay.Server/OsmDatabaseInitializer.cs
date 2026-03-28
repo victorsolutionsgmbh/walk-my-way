@@ -142,7 +142,7 @@ public static class OsmDatabaseInitializer
             $"--database {builder.Database}",
             $"--username {builder.Username}",
             $"--host {builder.Host}",
-            $"--port {builder.Port ?? 5432}",
+            $"--port {(builder.Port > 0 ? builder.Port : 5432)}",
             "--number-processes 4",
             "--cache 2000",
             $"\"{pbfPath}\"");
