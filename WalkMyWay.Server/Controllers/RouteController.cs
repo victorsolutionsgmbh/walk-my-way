@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using WalkMyWay.Server;
 using WalkMyWay.Server.Models;
 using WalkMyWay.Server.Services;
 
@@ -56,8 +57,8 @@ public class RouteController : ControllerBase
             return BadRequest(new { error = "Each stop must have a count of at least 1." });
 
         var totalStops = request.Preferences.Sum(p => p.Count);
-        if (totalStops > 5)
-            return BadRequest(new { error = $"Total stops cannot exceed 5 (requested {totalStops})." });
+        if (totalStops > AppConstants.MaxStops)
+            return BadRequest(new { error = $"Total stops cannot exceed {AppConstants.MaxStops} (requested {totalStops})." });
 
         try
         {

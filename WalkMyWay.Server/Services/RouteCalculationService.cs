@@ -1,3 +1,4 @@
+using WalkMyWay.Server;
 using WalkMyWay.Server.Models;
 
 namespace WalkMyWay.Server.Services;
@@ -69,7 +70,7 @@ public class RouteCalculationService
             waypoints = SortWaypointsByRouteOrder(waypoints, routePoints);
         }
 
-        waypoints = waypoints.Take(9).ToList();
+        waypoints = waypoints.Take(AppConstants.MaxStops).ToList();
 
         return new RouteResponse
         {
@@ -106,7 +107,8 @@ public class RouteCalculationService
                         Rating = c.Rating,
                         UserRatingsTotal = c.UserRatingsTotal,
                         Latitude = c.Latitude,
-                        Longitude = c.Longitude
+                        Longitude = c.Longitude,
+                        IsOpen = c.IsOpen
                     }, c.Viewport, c.AreaM2);
                 }
             }

@@ -32,5 +32,6 @@ public record PlaceCandidate(
     double Latitude,
     double Longitude,
     (double NeLat, double NeLng, double SwLat, double SwLng) Viewport,
-    double AreaM2 = 0   // polygon area in approx. m² (0 for point features)
+    double AreaM2 = 0,      // polygon area in approx. m² (0 for point features)
+    bool?  IsOpen = null    // null = no opening_hours data; true/false = open/closed now
 );

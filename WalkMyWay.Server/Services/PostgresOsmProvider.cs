@@ -250,10 +250,11 @@ public class PostgresOsmProvider : IMapProvider
         while (await reader.ReadAsync())
         {
             var openingHours = reader.IsDBNull(ohColumn) ? null : reader.GetString(ohColumn);
+            bool? isOpen     = openingHours != null ? IsOpenNow(openingHours, now) : null;
 
             // When openNow is requested, only keep places that have opening_hours data
             // AND are currently open. Places without opening_hours are excluded.
-            if (openNow && (openingHours == null || !IsOpenNow(openingHours, now)))
+            if (openNow && isOpen != true)
                 continue;
 
             var id             = reader.GetString(0);
@@ -288,7 +289,8 @@ public class PostgresOsmProvider : IMapProvider
                 Latitude:         pLat,
                 Longitude:        pLng,
                 Viewport:         viewport,
-                AreaM2:           areaM2));
+                AreaM2:           areaM2,
+                IsOpen:           isOpen));
 
             if (results.Count == 10) break;
         }

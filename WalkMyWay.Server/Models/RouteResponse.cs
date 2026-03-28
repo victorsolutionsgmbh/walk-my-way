@@ -17,4 +17,6 @@ public class WaypointInfo
     public int UserRatingsTotal { get; set; }
     public double Latitude { get; set; }
     public double Longitude { get; set; }
+    /// <summary>null = no opening_hours data available; true/false = currently open/closed</summary>
+    public bool? IsOpen { get; set; }
 }
