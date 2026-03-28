@@ -32,7 +32,7 @@ public class AuthController : ControllerBase
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
-            issuer: "walkmyway.victor.solutions",
+            issuer: "walkmyway.fr",
             expires: DateTime.UtcNow.AddMinutes(15),
             signingCredentials: creds
         );

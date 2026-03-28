@@ -86,7 +86,7 @@ The architecture shift had a significant practical impact:
 | Route calculation | Google Directions API | **Google Directions API** (still) |
 | Turn-by-turn navigation | Google Maps URL | **Google Maps URL** (still) |
 
-**Google API calls per user interaction dropped from ~10–15 to 1** — the single Directions API call that calculates the final route. Everything else runs locally.
+**Google API calls per user interaction dropped from ~10-15 to 1** — the single Directions API call that calculates the final route. Everything else runs locally.
 
 The authentication concern largely resolved itself as a side effect. With no sensitive third-party keys to protect beyond the one remaining Directions key, the only thing worth securing is the app's own API surface — which is handled with a simple shared key and short-lived JWT tokens, without needing user accounts.
 

@@ -28,7 +28,7 @@ public class Program
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidIssuer = "walkmyway.victor.solutions",
+                    ValidIssuer = "walkmyway.fr",
                     ValidateAudience = false,
                     ValidateLifetime = true,
                     ValidateIssuerSigningKey = true,
