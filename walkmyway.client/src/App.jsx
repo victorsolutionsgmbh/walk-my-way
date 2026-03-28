@@ -3,6 +3,7 @@ import './App.css';
 import { useTranslation } from './i18n/TranslationContext.jsx';
 import ImprintModal from './ImprintModal.jsx';
 import PrivacyModal from './PrivacyModal.jsx';
+import { authFetch } from './api.js';
 
 const PREFERENCE_VALUES = [
     { value: 'cafe' },
@@ -68,7 +69,7 @@ export default function App() {
 
     // ── Region check ────────────────────────────────────────────────────────────
     useEffect(() => {
-        fetch('/api/route/check-region')
+        authFetch('/api/route/check-region')
             .then(r => r.json())
             .then(data => setRegionState(data.allowed ? 'allowed' : 'blocked'))
             .catch(() => setRegionState('allowed')); // network error → don't block
@@ -78,7 +79,7 @@ export default function App() {
     const resolvePosition = useCallback((position) => {
         const { latitude, longitude } = position.coords;
         setCurrentLocation({ lat: latitude, lng: longitude });
-        fetch(`/api/route/address?lat=${latitude}&lng=${longitude}`)
+        authFetch(`/api/route/address?lat=${latitude}&lng=${longitude}`)
             .then(r => r.json())
             .then(data => setCurrentAddress(data.address))
             .catch(() => setCurrentAddress(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`))
@@ -160,7 +161,7 @@ export default function App() {
                     params.set('lat', currentLocation.lat);
                     params.set('lng', currentLocation.lng);
                 }
-                const res = await fetch(`/api/route/autocomplete?${params}`, { signal: controller.signal });
+                const res = await authFetch(`/api/route/autocomplete?${params}`, { signal: controller.signal });
                 if (res.ok) {
                     const data = await res.json();
                     setSuggestions(data.suggestions || []);
@@ -259,7 +260,7 @@ export default function App() {
         setRouteResult(null);
 
         try {
-            const res = await fetch('/api/route', {
+            const res = await authFetch('/api/route', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

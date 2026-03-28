@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using System.Text;
 using WalkMyWay.Server;
 using WalkMyWay.Server.Services;
 
@@ -15,6 +18,24 @@ public class Program
 
         builder.Services.AddControllers();
         builder.Services.AddSingleton<GoogleApiLogger>();
+
+        var jwtSecret = builder.Configuration["Auth:JwtSecret"]
+            ?? throw new InvalidOperationException("Auth:JwtSecret is not configured.");
+
+        builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = "walkmyway.victor.solutions",
+                    ValidateAudience = false,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                    ClockSkew = TimeSpan.Zero
+                };
+            });
 
         var connString = builder.Configuration.GetConnectionString("Osm")
             ?? throw new InvalidOperationException("ConnectionStrings:Osm is not configured.");
@@ -41,6 +62,7 @@ public class Program
         app.UseDefaultFiles();
         app.UseStaticFiles();
         app.UseHttpsRedirection();
+        app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();
         app.MapFallbackToFile("/index.html");

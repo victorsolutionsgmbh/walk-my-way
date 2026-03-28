@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WalkMyWay.Server;
 using WalkMyWay.Server.Models;
@@ -6,6 +7,7 @@ using WalkMyWay.Server.Services;
 namespace WalkMyWay.Server.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public class RouteController : ControllerBase
 {
