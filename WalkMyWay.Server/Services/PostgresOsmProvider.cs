@@ -282,9 +282,22 @@ public class PostgresOsmProvider : IMapProvider
               """
             : "";
 
+        // Inline SQL expression that formats a full address (street + housenumber + city)
+        // from the OSM tags columns. Used in POI and area branches.
+        const string addrExpr = """
+            CASE
+                WHEN (tags->'addr:street') IS NOT NULL THEN
+                    (tags->'addr:street')
+                    || CASE WHEN "addr:housenumber" IS NOT NULL THEN ' ' || "addr:housenumber" ELSE '' END
+                    || CASE WHEN (tags->'addr:city') IS NOT NULL THEN ', ' || (tags->'addr:city') ELSE '' END
+                ELSE (tags->'addr:city')
+            END
+            """;
+
         // Address nodes are included only when the input contains a digit (e.g. "Hauptstr 5").
         // Both point nodes and building polygons are checked, because Vienna OSM data stores
         // most building addresses on polygons, not standalone point nodes.
+        // For address branches the name IS already "street housenumber", so address = just city.
         var addressUnion = hasDigit ? $"""
 
                 UNION ALL
@@ -298,7 +311,8 @@ public class PostgresOsmProvider : IMapProvider
                            CASE WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @startsWith THEN 0
                                 WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @pattern    THEN 1
                                 ELSE 2 END AS mrank,
-                           0 AS src
+                           0 AS src,
+                           tags->'addr:city' AS address
                     FROM   planet_osm_point
                     WHERE  (tags->'addr:street') IS NOT NULL
                       AND  ("addr:housenumber") IS NOT NULL
@@ -318,7 +332,8 @@ public class PostgresOsmProvider : IMapProvider
                            CASE WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @startsWith THEN 0
                                 WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @pattern    THEN 1
                                 ELSE 2 END AS mrank,
-                           0 AS src
+                           0 AS src,
+                           tags->'addr:city' AS address
                     FROM   planet_osm_polygon
                     WHERE  (tags->'addr:street') IS NOT NULL
                       AND  ("addr:housenumber") IS NOT NULL
@@ -331,11 +346,12 @@ public class PostgresOsmProvider : IMapProvider
         // mrank: 0 = prefix match, 1 = substring match, 2 = trigram-only (typo) match.
         // Each branch is capped with LIMIT 20 before the outer dedup to avoid scanning
         // more rows than necessary. DISTINCT ON then picks the best match per name.
+        // Column order: name(0), city(1), lng(2), lat(3), address(4)
         var sql = $"""
-            SELECT name, city, lng, lat
+            SELECT name, city, lng, lat, address
             FROM (
                 SELECT DISTINCT ON (lower(sub.name))
-                       sub.name, sub.city, sub.lng, sub.lat, sub.mrank, sub.src,
+                       sub.name, sub.city, sub.lng, sub.lat, sub.mrank, sub.src, sub.address,
                        {proximitySelect} AS prox
                 FROM (
                     -- Named POIs / places (point nodes), capped early
@@ -347,7 +363,8 @@ public class PostgresOsmProvider : IMapProvider
                                CASE WHEN name ILIKE @startsWith THEN 0
                                     WHEN name ILIKE @pattern    THEN 1
                                     ELSE                             2 END AS mrank,
-                               0 AS src
+                               0 AS src,
+                               {addrExpr} AS address
                         FROM   planet_osm_point
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  name IS NOT NULL
@@ -363,7 +380,7 @@ public class PostgresOsmProvider : IMapProvider
 
                     -- Named streets / roads — one representative row per distinct name
                     (
-                        SELECT name, city, lng, lat, mrank, src
+                        SELECT name, city, lng, lat, mrank, src, address
                         FROM (
                             SELECT DISTINCT ON (name) name,
                                    NULL AS city,
@@ -372,7 +389,8 @@ public class PostgresOsmProvider : IMapProvider
                                    CASE WHEN name ILIKE @startsWith THEN 0
                                         WHEN name ILIKE @pattern    THEN 1
                                         ELSE                             2 END AS mrank,
-                                   1 AS src
+                                   1 AS src,
+                                   NULL::text AS address
                             FROM   planet_osm_line
                             WHERE  (name ILIKE @pattern OR name % @q)
                               AND  highway IS NOT NULL
@@ -394,7 +412,8 @@ public class PostgresOsmProvider : IMapProvider
                                CASE WHEN name ILIKE @startsWith THEN 0
                                     WHEN name ILIKE @pattern    THEN 1
                                     ELSE                             2 END AS mrank,
-                               0 AS src
+                               0 AS src,
+                               {addrExpr} AS address
                         FROM   planet_osm_polygon
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  (place IS NOT NULL OR leisure IS NOT NULL
@@ -431,14 +450,15 @@ public class PostgresOsmProvider : IMapProvider
 
         while (await reader.ReadAsync())
         {
-            var name = reader.GetString(0);
-            var city = reader.IsDBNull(1) ? null : reader.GetString(1);
-            var pLng = reader.GetDouble(2);
-            var pLat = reader.GetDouble(3);
+            var name    = reader.GetString(0);
+            var pLng    = reader.GetDouble(2);
+            var pLat    = reader.GetDouble(3);
+            var address = reader.IsDBNull(4) ? null : reader.GetString(4);
 
             results.Add(new PlaceSuggestion
             {
-                Description = string.IsNullOrEmpty(city) ? name : $"{name}, {city}",
+                Description = name,
+                Address     = string.IsNullOrWhiteSpace(address) ? null : address,
                 PlaceId     = $"{pLat.ToString(CultureInfo.InvariantCulture)},{pLng.ToString(CultureInfo.InvariantCulture)}"
             });
         }

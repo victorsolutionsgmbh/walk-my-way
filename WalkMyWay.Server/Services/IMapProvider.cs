@@ -19,7 +19,8 @@ public record RouteData(
 public class PlaceSuggestion
 {
     public string Description { get; set; } = string.Empty;
-    public string PlaceId { get; set; } = string.Empty;
+    public string? Address    { get; set; }
+    public string PlaceId     { get; set; } = string.Empty;
 }
 
 public record PlaceCandidate(
