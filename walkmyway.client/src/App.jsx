@@ -226,6 +226,31 @@ export default function App() {
     };
     const handleDragEnd = () => { dragIndexRef.current = null; };
 
+    // Touch drag-and-drop for iOS Safari (HTML5 drag API is not supported on iPhone)
+    // touch-action:none on the handle prevents scroll interference.
+    const handleTouchStart = useCallback((e, index) => {
+        dragIndexRef.current = index;
+    }, []);
+
+    const handleTouchMove = useCallback((e) => {
+        if (dragIndexRef.current === null) return;
+        const touch = e.touches[0];
+        const el = document.elementFromPoint(touch.clientX, touch.clientY);
+        const row = el?.closest('[data-drag-index]');
+        if (!row) return;
+        const toIndex = parseInt(row.dataset.dragIndex, 10);
+        if (isNaN(toIndex) || toIndex === dragIndexRef.current) return;
+        setPreferences(prev => {
+            const arr = [...prev];
+            const [item] = arr.splice(dragIndexRef.current, 1);
+            arr.splice(toIndex, 0, item);
+            dragIndexRef.current = toIndex;
+            return arr;
+        });
+    }, []);
+
+    const handleTouchEnd = useCallback(() => { dragIndexRef.current = null; }, []);
+
     // ── Route ────────────────────────────────────────────────────────────────────
     const handleFindRoute = async () => {
         if (!destination.trim()) { setError(t('route.error_no_destination')); return; }
@@ -474,13 +499,22 @@ export default function App() {
                                         {preferences.map((pref, index) => (
                                             <div
                                                 key={pref.id}
+                                                data-drag-index={index}
                                                 className={`wmw-pref-row${preserveOrder ? ' wmw-pref-row-draggable' : ''}`}
                                                 draggable={preserveOrder}
                                                 onDragStart={() => handleDragStart(index)}
                                                 onDragOver={e => handleDragOver(e, index)}
                                                 onDragEnd={handleDragEnd}
                                             >
-                                                {preserveOrder && <span className="wmw-drag-handle" aria-hidden="true">⠿</span>}
+                                                {preserveOrder && (
+                                                    <span
+                                                        className="wmw-drag-handle"
+                                                        aria-hidden="true"
+                                                        onTouchStart={e => handleTouchStart(e, index)}
+                                                        onTouchMove={handleTouchMove}
+                                                        onTouchEnd={handleTouchEnd}
+                                                    >⠿</span>
+                                                )}
                                                 <select
                                                     value={pref.type}
                                                     onChange={e => updatePreference(pref.id, 'type', e.target.value)}
@@ -491,14 +525,21 @@ export default function App() {
                                                     ))}
                                                 </select>
                                                 <div className="wmw-count-group">
-                                                    <input
-                                                        type="number"
-                                                        min="1"
-                                                        max={MAX_STOPS - (totalStops - pref.count)}
-                                                        value={pref.count}
-                                                        onChange={e => updateCount(pref.id, e.target.value)}
-                                                        className="wmw-input wmw-input-count"
-                                                    />
+                                                    <div className="wmw-stepper">
+                                                        <button
+                                                            className="wmw-stepper-btn"
+                                                            onClick={() => updateCount(pref.id, pref.count - 1)}
+                                                            disabled={pref.count <= 1}
+                                                            aria-label="Decrease"
+                                                        >−</button>
+                                                        <span className="wmw-stepper-val">{pref.count}</span>
+                                                        <button
+                                                            className="wmw-stepper-btn"
+                                                            onClick={() => updateCount(pref.id, pref.count + 1)}
+                                                            disabled={pref.count >= MAX_STOPS - (totalStops - pref.count)}
+                                                            aria-label="Increase"
+                                                        >+</button>
+                                                    </div>
                                                     {!TYPES_WITHOUT_OPEN_NOW.has(pref.type) && (
                                                         <label className="wmw-max-toggle">
                                                             <input

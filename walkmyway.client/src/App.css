@@ -196,11 +196,51 @@
     box-shadow: none;
 }
 
-.wmw-input-count {
-    width: 64px;
-    text-align: center;
-    padding: 10px 8px;
+/* ---- Stepper (replaces number input on stops) ---- */
+.wmw-stepper {
+    display: flex;
+    align-items: center;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    overflow: hidden;
     flex-shrink: 0;
+    height: 38px;
+}
+
+.wmw-stepper-btn {
+    background: #f3f4f6;
+    border: none;
+    width: 34px;
+    height: 100%;
+    font-size: 18px;
+    line-height: 1;
+    color: #374151;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.wmw-stepper-btn:hover:not(:disabled) {
+    background: #e5e7eb;
+}
+
+.wmw-stepper-btn:disabled {
+    color: #d1d5db;
+    cursor: not-allowed;
+}
+
+.wmw-stepper-val {
+    width: 28px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+    color: #111827;
+    border-left: 1px solid #d1d5db;
+    border-right: 1px solid #d1d5db;
 }
 
 .wmw-input:disabled {
@@ -366,6 +406,7 @@
     font-size: 16px;
     padding: 0 2px;
     flex-shrink: 0;
+    touch-action: none; /* prevents page scroll on iOS when dragging */
     cursor: grab;
 }
 
@@ -731,7 +772,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 13px;
+    font-size: 11px;
     color: #6b7280;
 }
 
@@ -744,7 +785,7 @@
     background: none;
     border: none;
     padding: 0;
-    font-size: 13px;
+    font-size: 11px;
     color: #6b7280;
     cursor: pointer;
     text-decoration: underline;
@@ -913,5 +954,15 @@
 
     .wmw-select {
         flex: 1 1 100%;
+    }
+}
+
+/* Prevent iOS Safari from zooming on input focus.
+   iOS zooms whenever a focused element has font-size < 16px.
+   (hover:none) + (pointer:coarse) reliably targets touch-only devices. */
+@media (hover: none) and (pointer: coarse) {
+    .wmw-input,
+    .wmw-select {
+        font-size: 16px;
     }
 }
