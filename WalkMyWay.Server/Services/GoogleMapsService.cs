@@ -83,14 +83,46 @@ public class GoogleMapsService
         var destinationAddress = route.Legs?.FirstOrDefault()?.EndAddress ?? request.DestinationAddress;
 
         var waypoints = new List<WaypointInfo>();
-        foreach (var preference in request.Preferences)
+
+        if (request.PreserveOrder)
         {
-            var maxCount = preference.Count;
-            var places = await FindPlacesAlongRouteAsync(routePoints, preference.Type, maxCount, preference.OpenNow);
-            waypoints.AddRange(places);
+            // Split the route into equal segments — one per preference entry.
+            // Each preference is searched only within its segment so that
+            // park → cafe → park finds distinct places in route order.
+            var seenPlaceIds = new HashSet<string>();
+            var prefs = request.Preferences;
+            var segmentSize = (double)routePoints.Count / prefs.Count;
+            for (int i = 0; i < prefs.Count; i++)
+            {
+                var segStart = (int)Math.Round(i * segmentSize);
+                var segEnd = (int)Math.Round((i + 1) * segmentSize);
+                var segment = routePoints
+                    .Skip(segStart)
+                    .Take(Math.Max(1, segEnd - segStart))
+                    .ToList();
+                var places = await FindPlacesAlongRouteAsync(segment, prefs[i].Type, prefs[i].Count, prefs[i].OpenNow);
+                foreach (var place in SortWaypointsByRouteOrder(places, segment))
+                {
+                    if (seenPlaceIds.Add(place.PlaceId))
+                        waypoints.Add(place);
+                }
+            }
+        }
+        else
+        {
+            var seenPlaceIds = new HashSet<string>();
+            foreach (var preference in request.Preferences)
+            {
+                var places = await FindPlacesAlongRouteAsync(routePoints, preference.Type, preference.Count, preference.OpenNow);
+                foreach (var place in places)
+                {
+                    if (seenPlaceIds.Add(place.PlaceId))
+                        waypoints.Add(place);
+                }
+            }
+            waypoints = SortWaypointsByRouteOrder(waypoints, routePoints);
         }
 
-        waypoints = SortWaypointsByRouteOrder(waypoints, routePoints);
         waypoints = waypoints.Take(9).ToList();
 
         return new RouteResponse
