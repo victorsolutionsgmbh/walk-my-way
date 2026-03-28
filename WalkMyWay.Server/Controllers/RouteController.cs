@@ -11,11 +11,13 @@ public class RouteController : ControllerBase
 {
     private readonly RouteCalculationService _routeService;
     private readonly IMapProvider _mapProvider;
+    private readonly ILogger<RouteController> _logger;
 
-    public RouteController(RouteCalculationService routeService, IMapProvider mapProvider)
+    public RouteController(RouteCalculationService routeService, IMapProvider mapProvider, ILogger<RouteController> logger)
     {
         _routeService = routeService;
         _mapProvider = mapProvider;
+        _logger = logger;
     }
 
     [HttpGet("autocomplete")]
@@ -27,15 +29,31 @@ public class RouteController : ControllerBase
         if (string.IsNullOrWhiteSpace(input) || input.Length < 2)
             return Ok(new { suggestions = Array.Empty<object>() });
 
-        var suggestions = await _mapProvider.GetPlaceAutocompleteSuggestionsAsync(input, lat, lng);
-        return Ok(new { suggestions });
+        try
+        {
+            var suggestions = await _mapProvider.GetPlaceAutocompleteSuggestionsAsync(input, lat, lng);
+            return Ok(new { suggestions });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Autocomplete failed for input '{Input}'", input);
+            return Ok(new { suggestions = Array.Empty<object>() });
+        }
     }
 
     [HttpGet("address")]
     public async Task<IActionResult> GetAddress([FromQuery] double lat, [FromQuery] double lng)
     {
-        var address = await _mapProvider.ReverseGeocodeAsync(lat, lng);
-        return Ok(new { address });
+        try
+        {
+            var address = await _mapProvider.ReverseGeocodeAsync(lat, lng);
+            return Ok(new { address });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Reverse geocoding failed for ({Lat},{Lng})", lat, lng);
+            return Ok(new { address = $"{lat:F6}, {lng:F6}" });
+        }
     }
 
     [HttpGet("check-region")]
@@ -67,10 +85,14 @@ public class RouteController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
+            _logger.LogWarning(ex, "Route calculation failed for destination '{Destination}': {Message}",
+                request.DestinationAddress, ex.Message);
             return BadRequest(new { error = ex.Message });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Unexpected error calculating route for destination '{Destination}' from ({Lat},{Lng})",
+                request.DestinationAddress, request.CurrentLatitude, request.CurrentLongitude);
             return StatusCode(500, new { error = "An unexpected error occurred while calculating the route." });
         }
     }
