@@ -172,8 +172,11 @@ export default function App() {
         }, 300);
     };
 
-    const selectSuggestion = (description) => {
-        setDestination(description);
+    const selectSuggestion = (suggestion) => {
+        const combined = suggestion.address
+            ? `${suggestion.description}, ${suggestion.address}`
+            : suggestion.description;
+        setDestination(combined);
         setSuggestions([]);
         setShowSuggestions(false);
     };
@@ -394,7 +397,7 @@ export default function App() {
                                                 <div
                                                     key={s.placeId}
                                                     className="wmw-suggestion"
-                                                    onMouseDown={e => { e.preventDefault(); selectSuggestion(s.description); }}
+                                                    onMouseDown={e => { e.preventDefault(); selectSuggestion(s); }}
                                                 >
                                                     <span className="wmw-suggestion-name">{s.description}</span>
                                                     {s.address && <span className="wmw-suggestion-addr">{s.address}</span>}

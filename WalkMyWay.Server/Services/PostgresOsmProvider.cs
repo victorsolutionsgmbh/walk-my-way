@@ -120,9 +120,10 @@ public class PostgresOsmProvider : IMapProvider
 
     public async Task<RouteData> GetWalkingRouteAsync(double originLat, double originLng, string destination)
     {
+        var sanitizedDestination = destination.Replace("'", "");
         var url = $"https://maps.googleapis.com/maps/api/directions/json" +
                   $"?origin={originLat.ToString(CultureInfo.InvariantCulture)},{originLng.ToString(CultureInfo.InvariantCulture)}" +
-                  $"&destination={Uri.EscapeDataString(destination)}" +
+                  $"&destination={Uri.EscapeDataString(sanitizedDestination)}" +
                   $"&mode=walking&key={_googleApiKey}";
 
         var json     = await ThrottledGetStringAsync(url);
