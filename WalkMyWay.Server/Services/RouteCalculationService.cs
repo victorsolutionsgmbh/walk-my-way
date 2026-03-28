@@ -21,39 +21,43 @@ public class RouteCalculationService
 
         if (request.PreserveOrder)
         {
-            var seenPlaceIds = new HashSet<string>();
-            var prefs = request.Preferences;
+            var prefs       = request.Preferences;
             var segmentSize = (double)routePoints.Count / prefs.Count;
 
-            for (int i = 0; i < prefs.Count; i++)
+            // All segments are independent — fetch in parallel.
+            var segmentTasks = prefs.Select((pref, i) =>
             {
                 var segStart = (int)Math.Round(i * segmentSize);
-                var segEnd = (int)Math.Round((i + 1) * segmentSize);
-                var segment = routePoints
+                var segEnd   = (int)Math.Round((i + 1) * segmentSize);
+                var segment  = routePoints
                     .Skip(segStart)
                     .Take(Math.Max(1, segEnd - segStart))
                     .ToList();
+                return (Segment: segment, Task: FindPlacesAlongRouteAsync(segment, pref.Type, pref.Count, pref.OpenNow));
+            }).ToList();
 
-                var places = await FindPlacesAlongRouteAsync(segment, prefs[i].Type, prefs[i].Count, prefs[i].OpenNow);
-                foreach (var place in SortWaypointsByRouteOrder(places, segment))
-                {
+            await Task.WhenAll(segmentTasks.Select(x => x.Task));
+
+            var seenPlaceIds = new HashSet<string>();
+            foreach (var (segment, task) in segmentTasks)
+                foreach (var place in SortWaypointsByRouteOrder(await task, segment))
                     if (seenPlaceIds.Add(place.PlaceId))
                         waypoints.Add(place);
-                }
-            }
         }
         else
         {
+            // All preferences are independent — fetch in parallel.
+            var prefTasks = request.Preferences
+                .Select(pref => FindPlacesAlongRouteAsync(routePoints, pref.Type, pref.Count, pref.OpenNow))
+                .ToList();
+
+            var allResults  = await Task.WhenAll(prefTasks);
             var seenPlaceIds = new HashSet<string>();
-            foreach (var preference in request.Preferences)
-            {
-                var places = await FindPlacesAlongRouteAsync(routePoints, preference.Type, preference.Count, preference.OpenNow);
+            foreach (var places in allResults)
                 foreach (var place in places)
-                {
                     if (seenPlaceIds.Add(place.PlaceId))
                         waypoints.Add(place);
-                }
-            }
+
             waypoints = SortWaypointsByRouteOrder(waypoints, routePoints);
         }
 
@@ -75,9 +79,12 @@ public class RouteCalculationService
         var found = new Dictionary<string, (WaypointInfo Info, (double NeLat, double NeLng, double SwLat, double SwLng) Viewport)>();
         var samplePoints = GetSampledPoints(routePoints, 5);
 
-        foreach (var (lat, lng) in samplePoints)
+        // All sample-point searches are independent — run in parallel.
+        var candidateLists = await Task.WhenAll(
+            samplePoints.Select(p => _mapProvider.SearchPlacesNearbyAsync(p.Lat, p.Lng, 800, preferenceType, openNow)));
+
+        foreach (var candidates in candidateLists)
         {
-            var candidates = await _mapProvider.SearchPlacesNearbyAsync(lat, lng, 800, preferenceType, openNow);
             foreach (var c in candidates)
             {
                 if (!found.ContainsKey(c.PlaceId))
