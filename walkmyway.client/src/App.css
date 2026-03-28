@@ -693,6 +693,32 @@
     margin-bottom: 4px;
 }
 
+/* ---- Idle / location grant card ---- */
+.wmw-card-idle {
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+}
+
+.wmw-idle-icon {
+    margin-bottom: 4px;
+}
+
+.wmw-idle-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #111827;
+    margin: 0;
+}
+
+.wmw-idle-body {
+    font-size: 14px;
+    color: #6b7280;
+    line-height: 1.55;
+    margin: 0;
+    max-width: 320px;
+}
+
 /* ---- Footer ---- */
 .wmw-footer {
     background: #ffffff;

@@ -74,10 +74,6 @@ export default function App() {
             .catch(() => setRegionState('allowed')); // network error → don't block
     }, []);
 
-    // ── iOS detection (requires user-gesture for geolocation prompt) ────────────
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
     // ── Geolocation ─────────────────────────────────────────────────────────────
     const resolvePosition = useCallback((position) => {
         const { latitude, longitude } = position.coords;
@@ -127,9 +123,6 @@ export default function App() {
         );
     }, [resolvePosition, t]);
 
-    useEffect(() => {
-        if (regionState === 'allowed' && !isIOS) requestLocation();
-    }, [regionState, requestLocation, isIOS]);
 
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -341,14 +334,15 @@ export default function App() {
 
             <main className="wmw-main">
                 {locationState === 'idle' && (
-                    <div className="wmw-card wmw-card-denied">
-                        <div className="wmw-denied-icon">
-                            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                                <path d="M24 4C16.27 4 10 10.27 10 18C10 28.5 24 44 24 44C24 44 38 28.5 38 18C38 10.27 31.73 4 24 4ZM24 23C21.24 23 19 20.76 19 18C19 15.24 21.24 13 24 13C26.76 13 29 15.24 29 18C29 20.76 26.76 23 24 23Z" fill="#2563eb" />
+                    <div className="wmw-card wmw-card-center wmw-card-idle">
+                        <div className="wmw-idle-icon">
+                            <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+                                <circle cx="26" cy="26" r="26" fill="#eff6ff" />
+                                <path d="M26 10C19.37 10 14 15.37 14 22C14 30.75 26 42 26 42C26 42 38 30.75 38 22C38 15.37 32.63 10 26 10ZM26 27C23.24 27 21 24.76 21 22C21 19.24 23.24 17 26 17C28.76 17 31 19.24 31 22C31 24.76 28.76 27 26 27Z" fill="#2563eb" />
                             </svg>
                         </div>
-                        <h2 className="wmw-denied-title">{t('location.grant_access')}</h2>
-                        <p className="wmw-denied-body">{t('location.grant_access_body')}</p>
+                        <h2 className="wmw-idle-title">{t('location.grant_access')}</h2>
+                        <p className="wmw-idle-body">{t('location.grant_access_body')}</p>
                         <button className="wmw-btn wmw-btn-primary" onClick={requestLocation}>
                             {t('location.grant_access')}
                         </button>
