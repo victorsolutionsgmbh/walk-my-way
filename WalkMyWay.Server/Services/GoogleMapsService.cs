@@ -85,8 +85,8 @@ public class GoogleMapsService
         var waypoints = new List<WaypointInfo>();
         foreach (var preference in request.Preferences)
         {
-            var maxCount = preference.Count <= 0 ? 5 : preference.Count;
-            var places = await FindPlacesAlongRouteAsync(routePoints, preference.Type, maxCount);
+            var maxCount = preference.Count;
+            var places = await FindPlacesAlongRouteAsync(routePoints, preference.Type, maxCount, preference.OpenNow);
             waypoints.AddRange(places);
         }
 
@@ -102,15 +102,17 @@ public class GoogleMapsService
     }
 
     private async Task<List<WaypointInfo>> FindPlacesAlongRouteAsync(
-        List<(double lat, double lng)> routePoints, string preferenceType, int maxCount)
+        List<(double lat, double lng)> routePoints, string preferenceType, int maxCount, bool openNow = false)
     {
         var googleType = MapToGoogleType(preferenceType);
         var found = new Dictionary<string, WaypointInfo>();
-        var samplePoints = GetSampledPoints(routePoints, 3);
+        var viewports = new Dictionary<string, (double neLat, double neLng, double swLat, double swLng)>();
+        var samplePoints = GetSampledPoints(routePoints, 5);
 
         foreach (var (lat, lng) in samplePoints)
         {
             var url = $"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat.ToString(CultureInfo.InvariantCulture)},{lng.ToString(CultureInfo.InvariantCulture)}&radius=800&type={googleType}&key={_apiKey}";
+            if (openNow) url += "&opennow";
             var json = await ThrottledGetStringAsync(url);
             var response = JsonSerializer.Deserialize<PlacesApiResponse>(json, JsonOptions);
 
@@ -126,30 +128,49 @@ public class GoogleMapsService
                         Type = preferenceType,
                         Address = place.Vicinity,
                         PlaceId = place.PlaceId,
+                        Rating = place.Rating,
+                        UserRatingsTotal = place.UserRatingsTotal,
                         Latitude = place.Geometry.Location.Lat,
                         Longitude = place.Geometry.Location.Lng
                     };
+                    viewports[place.PlaceId] = (
+                        place.Geometry.Viewport.Northeast.Lat,
+                        place.Geometry.Viewport.Northeast.Lng,
+                        place.Geometry.Viewport.Southwest.Lat,
+                        place.Geometry.Viewport.Southwest.Lng
+                    );
                 }
             }
         }
 
-        // Score by minimum distance to route, filter to places reasonably close to the route.
-        // 500m allows for parks whose registered coordinate is at the centroid/entrance.
+        // Composite score: balances route proximity, rating, and review count.
+        // routeDist / (rating * log10(reviews + 10)) — lower score = better candidate.
+        // For large places (parks etc.) the effective distance uses all 4 bounding box corners
+        // + centroid so that a place whose centroid is far but whose boundary touches the route
+        // is not incorrectly filtered out.
         var scored = found.Values
-            .Select(p => (Place: p, RouteDist: MinRouteDistance(p.Latitude, p.Longitude, routePoints)))
-            .Where(x => x.RouteDist <= 500)
-            .OrderBy(x => x.RouteDist)
+            .Select(p =>
+            {
+                var vp = viewports.GetValueOrDefault(p.PlaceId);
+                var routeDist = MinRouteDistanceBounded(p.Latitude, p.Longitude, vp, routePoints);
+                var rating = p.Rating > 0 ? p.Rating : 3.0;
+                var popularity = Math.Log10(p.UserRatingsTotal + 10) * Math.Log10(p.UserRatingsTotal + 10);
+                var composite = routeDist / (rating * rating * rating * popularity);
+                return (Place: p, RouteDist: routeDist, Composite: composite);
+            })
+            .Where(x => x.RouteDist <= 250)
+            .OrderBy(x => x.Composite)
             .ToList();
 
         // Greedy cluster deduplication within this type:
-        // prefer the place closest to the route; skip any that is within 250m of an already-selected place.
-        // This prevents multiple parks/cafes that are clustered together from all being selected.
+        // skip any candidate within 400m of an already-selected place so that overlapping
+        // parks (e.g. Türkenschanzpark + Türkenschanz Hundepark) are never both selected.
         var selected = new List<WaypointInfo>();
-        foreach (var (place, _) in scored)
+        foreach (var (place, _, _) in scored)
         {
             if (selected.Count >= maxCount) break;
             bool tooClose = selected.Any(s =>
-                HaversineDistance(s.Latitude, s.Longitude, place.Latitude, place.Longitude) < 250);
+                HaversineDistance(s.Latitude, s.Longitude, place.Latitude, place.Longitude) < 400);
             if (!tooClose)
                 selected.Add(place);
         }
@@ -191,9 +212,13 @@ public class GoogleMapsService
         if (waypoints.Count > 0)
         {
             var wps = string.Join("|", waypoints.Select(w =>
-                string.IsNullOrEmpty(w.Name)
-                    ? $"{w.Latitude.ToString(CultureInfo.InvariantCulture)},{w.Longitude.ToString(CultureInfo.InvariantCulture)}"
-                    : w.Name));
+            {
+                if (string.IsNullOrEmpty(w.Name))
+                    return $"{w.Latitude.ToString(CultureInfo.InvariantCulture)},{w.Longitude.ToString(CultureInfo.InvariantCulture)}";
+                var name = w.Name.Replace("|", " ").Trim();
+                var address = w.Address.Replace("|", " ").Trim();
+                return string.IsNullOrEmpty(address) ? name : $"{name}, {address}";
+            }));
             sb.Append($"&waypoints={Uri.EscapeDataString(wps)}");
         }
 
@@ -203,6 +228,26 @@ public class GoogleMapsService
 
     private static double MinRouteDistance(double lat, double lng, List<(double lat, double lng)> route)
         => route.Min(p => HaversineDistance(lat, lng, p.lat, p.lng));
+
+    // For places with a known bounding box (parks, large areas) use the minimum distance
+    // from any of the 4 corners + centroid to the route, so that a large place whose
+    // centroid is far but whose boundary runs along the route is not incorrectly excluded.
+    private static double MinRouteDistanceBounded(
+        double lat, double lng,
+        (double neLat, double neLng, double swLat, double swLng) vp,
+        List<(double lat, double lng)> route)
+    {
+        var centroidDist = MinRouteDistance(lat, lng, route);
+        if (vp == default) return centroidDist;
+
+        return Math.Min(centroidDist, new[]
+        {
+            MinRouteDistance(vp.neLat, vp.neLng, route), // NE
+            MinRouteDistance(vp.swLat, vp.swLng, route), // SW
+            MinRouteDistance(vp.neLat, vp.swLng, route), // NW
+            MinRouteDistance(vp.swLat, vp.neLng, route), // SE
+        }.Min());
+    }
 
     private static List<(double lat, double lng)> GetSampledPoints(
         List<(double lat, double lng)> points, int count)
@@ -329,12 +374,22 @@ public class GoogleMapsService
         public string PlaceId { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string Vicinity { get; set; } = string.Empty;
+        public double Rating { get; set; }
+        [JsonPropertyName("user_ratings_total")]
+        public int UserRatingsTotal { get; set; }
         public PlaceGeometry Geometry { get; set; } = new();
     }
 
     private class PlaceGeometry
     {
         public PlaceLocation Location { get; set; } = new();
+        public PlaceViewport Viewport { get; set; } = new();
+    }
+
+    private class PlaceViewport
+    {
+        public PlaceLocation Northeast { get; set; } = new();
+        public PlaceLocation Southwest { get; set; } = new();
     }
 
     private class PlaceLocation

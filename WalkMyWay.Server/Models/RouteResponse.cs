@@ -13,6 +13,8 @@ public class WaypointInfo
     public string Type { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
     public string PlaceId { get; set; } = string.Empty;
+    public double Rating { get; set; }
+    public int UserRatingsTotal { get; set; }
     public double Latitude { get; set; }
     public double Longitude { get; set; }
 }

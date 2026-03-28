@@ -41,6 +41,13 @@ public class RouteController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
+        if (request.Preferences.Any(p => p.Count < 1))
+            return BadRequest(new { error = "Each stop must have a count of at least 1." });
+
+        var totalStops = request.Preferences.Sum(p => p.Count);
+        if (totalStops > 5)
+            return BadRequest(new { error = $"Total stops cannot exceed 5 (requested {totalStops})." });
+
         try
         {
             var result = await _mapsService.GetWalkingRouteAsync(request);
