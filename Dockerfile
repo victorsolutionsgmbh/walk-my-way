@@ -11,6 +11,8 @@ EXPOSE 8081
 # Diese Stufe wird zum Erstellen des Dienstprojekts verwendet.
 FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
 ARG BUILD_CONFIGURATION=Release
+ARG VITE_API_KEY
+ENV VITE_API_KEY=$VITE_API_KEY
 RUN apk add --no-cache nodejs npm
 WORKDIR /src
 COPY ["WalkMyWay.Server/WalkMyWay.Server.csproj", "WalkMyWay.Server/"]
@@ -23,6 +25,8 @@ RUN dotnet build "./WalkMyWay.Server.csproj" -c $BUILD_CONFIGURATION -o /app/bui
 # Diese Stufe wird verwendet, um das Dienstprojekt zu veröffentlichen, das in die letzte Phase kopiert werden soll.
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
+ARG VITE_API_KEY
+ENV VITE_API_KEY=$VITE_API_KEY
 RUN dotnet publish "./WalkMyWay.Server.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 
 # Diese Stufe wird in der Produktion oder bei Ausführung von VS im regulären Modus verwendet (Standard, wenn die Debugkonfiguration nicht verwendet wird).
