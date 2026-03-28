@@ -18,7 +18,16 @@ public class Program
 
         var connString = builder.Configuration.GetConnectionString("Osm")
             ?? throw new InvalidOperationException("ConnectionStrings:Osm is not configured.");
-        builder.Services.AddSingleton(NpgsqlDataSource.Create(connString));
+
+        // Disable PostgreSQL parallel query workers for all connections from this app.
+        // Our queries use LIMIT + spatial/GIN indexes and gain nothing from parallelism.
+        // Without this, the planner (influenced by GIN index statistics) may spawn workers
+        // that exhaust /dev/shm in Docker containers (default 64 MB), causing error 53100.
+        var csb = new NpgsqlConnectionStringBuilder(connString)
+        {
+            Options = "-c max_parallel_workers_per_gather=0"
+        };
+        builder.Services.AddSingleton(NpgsqlDataSource.Create(csb.ToString()));
 
         builder.Services.AddHttpClient<IMapProvider, PostgresOsmProvider>();
 
