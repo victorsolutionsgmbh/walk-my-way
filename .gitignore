@@ -103,3 +103,4 @@ dist-ssr
 *.sw?
 /walkmyway.client/.vscode
 /WalkMyWay.Server/WalkMyWay.Server.csproj.user
+/_datasets/austria-260327.osm.pbf

@@ -8,11 +8,13 @@ namespace WalkMyWay.Server.Controllers;
 [Route("api/[controller]")]
 public class RouteController : ControllerBase
 {
-    private readonly GoogleMapsService _mapsService;
+    private readonly RouteCalculationService _routeService;
+    private readonly IMapProvider _mapProvider;
 
-    public RouteController(GoogleMapsService mapsService)
+    public RouteController(RouteCalculationService routeService, IMapProvider mapProvider)
     {
-        _mapsService = mapsService;
+        _routeService = routeService;
+        _mapProvider = mapProvider;
     }
 
     [HttpGet("autocomplete")]
@@ -24,14 +26,14 @@ public class RouteController : ControllerBase
         if (string.IsNullOrWhiteSpace(input) || input.Length < 2)
             return Ok(new { suggestions = Array.Empty<object>() });
 
-        var suggestions = await _mapsService.GetPlaceAutocompleteSuggestionsAsync(input, lat, lng);
+        var suggestions = await _mapProvider.GetPlaceAutocompleteSuggestionsAsync(input, lat, lng);
         return Ok(new { suggestions });
     }
 
     [HttpGet("address")]
     public async Task<IActionResult> GetAddress([FromQuery] double lat, [FromQuery] double lng)
     {
-        var address = await _mapsService.ReverseGeocodeAsync(lat, lng);
+        var address = await _mapProvider.ReverseGeocodeAsync(lat, lng);
         return Ok(new { address });
     }
 
@@ -50,7 +52,7 @@ public class RouteController : ControllerBase
 
         try
         {
-            var result = await _mapsService.GetWalkingRouteAsync(request);
+            var result = await _routeService.GetWalkingRouteAsync(request);
             return Ok(result);
         }
         catch (InvalidOperationException ex)
