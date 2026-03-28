@@ -37,6 +37,15 @@ public class RouteController : ControllerBase
         return Ok(new { address });
     }
 
+    [HttpGet("check-region")]
+    public IActionResult CheckRegion()
+    {
+        // CF-IPCountry is set by Cloudflare. If absent (dev/localhost), allow access.
+        var country = Request.Headers["CF-IPCountry"].FirstOrDefault();
+        var allowed = string.IsNullOrEmpty(country) || country.Equals("AT", StringComparison.OrdinalIgnoreCase);
+        return Ok(new { allowed, country = country ?? "unknown" });
+    }
+
     [HttpPost]
     public async Task<IActionResult> FindRoute([FromBody] RouteRequest request)
     {

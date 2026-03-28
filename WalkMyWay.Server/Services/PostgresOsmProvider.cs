@@ -208,7 +208,8 @@ public class PostgresOsmProvider : IMapProvider
                    ST_YMin(ST_Transform(ST_Envelope(p.way), 4326)) AS sw_lat,
                    ST_XMin(ST_Transform(ST_Envelope(p.way), 4326)) AS sw_lng,
                    p.tags->'opening_hours'   AS opening_hours,
-                   nearest.name              AS fallback_street
+                   nearest.name              AS fallback_street,
+                   ST_Area(ST_Transform(p.way, 4326)::geography) AS area_m2
             FROM   planet_osm_polygon p
             LEFT JOIN LATERAL (
                 SELECT name FROM planet_osm_line
@@ -242,6 +243,7 @@ public class PostgresOsmProvider : IMapProvider
         var now            = DateTime.Now;
         int ohColumn       = hasViewport ? 11 : 7;
         int fallbackColumn = hasViewport ? 12 : 8;
+        int areaColumn     = hasViewport ? 13 : -1; // only polygons have area
 
         await using var reader = await cmd.ExecuteReaderAsync();
 
@@ -262,6 +264,7 @@ public class PostgresOsmProvider : IMapProvider
             var pLng           = reader.GetDouble(5);
             var pLat           = reader.GetDouble(6);
             var fallbackStreet = reader.IsDBNull(fallbackColumn) ? null : reader.GetString(fallbackColumn);
+            var areaM2         = areaColumn >= 0 && !reader.IsDBNull(areaColumn) ? reader.GetDouble(areaColumn) : 0.0;
 
             var viewport = hasViewport
                 ? (NeLat: reader.GetDouble(7), NeLng: reader.GetDouble(8),
@@ -284,7 +287,8 @@ public class PostgresOsmProvider : IMapProvider
                 UserRatingsTotal: 0,
                 Latitude:         pLat,
                 Longitude:        pLng,
-                Viewport:         viewport));
+                Viewport:         viewport,
+                AreaM2:           areaM2));
 
             if (results.Count == 10) break;
         }

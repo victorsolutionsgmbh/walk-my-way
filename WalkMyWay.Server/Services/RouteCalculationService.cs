@@ -21,28 +21,36 @@ public class RouteCalculationService
 
         if (request.PreserveOrder)
         {
-            var prefs       = request.Preferences;
-            var segmentSize = (double)routePoints.Count / prefs.Count;
+            var prefs = request.Preferences;
 
-            // All segments are independent — fetch in parallel.
-            var segmentTasks = prefs.Select((pref, i) =>
-            {
-                var segStart = (int)Math.Round(i * segmentSize);
-                var segEnd   = (int)Math.Round((i + 1) * segmentSize);
-                var segment  = routePoints
-                    .Skip(segStart)
-                    .Take(Math.Max(1, segEnd - segStart))
-                    .ToList();
-                return (Segment: segment, Task: FindPlacesAlongRouteAsync(segment, pref.Type, pref.Count, pref.OpenNow));
-            }).ToList();
+            // Search the FULL route for every preference so that quality-based scoring
+            // (e.g. park area) can pick the globally best candidate.
+            // We request extra candidates so the order-enforcement step has choices.
+            var prefTasks = prefs
+                .Select(pref => FindPlacesAlongRouteAsync(routePoints, pref.Type, pref.Count + 4, pref.OpenNow))
+                .ToList();
+            var allCandidates = await Task.WhenAll(prefTasks);
 
-            await Task.WhenAll(segmentTasks.Select(x => x.Task));
-
+            // Greedily assign stops in declared order: each next stop must appear
+            // at or after the previous stop's closest point on the route.
             var seenPlaceIds = new HashSet<string>();
-            foreach (var (segment, task) in segmentTasks)
-                foreach (var place in SortWaypointsByRouteOrder(await task, segment))
-                    if (seenPlaceIds.Add(place.PlaceId))
-                        waypoints.Add(place);
+            int minRouteIdx  = 0;
+
+            for (int i = 0; i < prefs.Count; i++)
+            {
+                int taken = 0;
+                foreach (var wp in allCandidates[i])
+                {
+                    if (taken >= prefs[i].Count) break;
+                    var idx = ClosestRouteIndex(wp.Latitude, wp.Longitude, routePoints);
+                    if (idx >= minRouteIdx && seenPlaceIds.Add(wp.PlaceId))
+                    {
+                        waypoints.Add(wp);
+                        minRouteIdx = idx;
+                        taken++;
+                    }
+                }
+            }
         }
         else
         {
@@ -76,7 +84,7 @@ public class RouteCalculationService
     private async Task<List<WaypointInfo>> FindPlacesAlongRouteAsync(
         List<(double Lat, double Lng)> routePoints, string preferenceType, int maxCount, bool openNow)
     {
-        var found = new Dictionary<string, (WaypointInfo Info, (double NeLat, double NeLng, double SwLat, double SwLng) Viewport)>();
+        var found = new Dictionary<string, (WaypointInfo Info, (double NeLat, double NeLng, double SwLat, double SwLng) Viewport, double AreaM2)>();
         var samplePoints = GetSampledPoints(routePoints, 5);
 
         // All sample-point searches are independent — run in parallel.
@@ -99,7 +107,7 @@ public class RouteCalculationService
                         UserRatingsTotal = c.UserRatingsTotal,
                         Latitude = c.Latitude,
                         Longitude = c.Longitude
-                    }, c.Viewport);
+                    }, c.Viewport, c.AreaM2);
                 }
             }
         }
@@ -107,12 +115,14 @@ public class RouteCalculationService
         var scored = found.Values
             .Select(entry =>
             {
-                var routeDist = MinRouteDistanceBounded(
+                var routeDist  = MinRouteDistanceBounded(
                     entry.Info.Latitude, entry.Info.Longitude, entry.Viewport, routePoints);
-                var rating = entry.Info.Rating > 0 ? entry.Info.Rating : 3.0;
-                var popularity = Math.Log10(entry.Info.UserRatingsTotal + 10);
-                popularity *= popularity;
-                var composite = routeDist / (rating * rating * rating * popularity);
+                // For parks, prefer larger polygons: log10(area_m²/1000 + 2) gives a
+                // multiplier of ~0.3 for tiny parks (100 m²) up to ~3.5 for large ones (1 km²).
+                var areaFactor = preferenceType is "park" or "parks" && entry.AreaM2 > 0
+                    ? Math.Log10(entry.AreaM2 / 1000.0 + 2.0)
+                    : 1.0;
+                var composite  = routeDist / areaFactor;
                 return (Place: entry.Info, RouteDist: routeDist, Composite: composite);
             })
             .Where(x => x.RouteDist <= 250)
@@ -130,6 +140,10 @@ public class RouteCalculationService
         }
         return selected;
     }
+
+    private static int ClosestRouteIndex(double lat, double lng, List<(double Lat, double Lng)> route)
+        => route.Select((p, i) => (i, d: HaversineDistance(lat, lng, p.Lat, p.Lng)))
+                .MinBy(x => x.d).i;
 
     private static List<WaypointInfo> SortWaypointsByRouteOrder(
         List<WaypointInfo> waypoints, List<(double Lat, double Lng)> route)

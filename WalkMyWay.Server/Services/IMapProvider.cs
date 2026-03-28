@@ -31,5 +31,6 @@ public record PlaceCandidate(
     int UserRatingsTotal,
     double Latitude,
     double Longitude,
-    (double NeLat, double NeLng, double SwLat, double SwLng) Viewport
+    (double NeLat, double NeLng, double SwLat, double SwLng) Viewport,
+    double AreaM2 = 0   // polygon area in approx. m² (0 for point features)
 );
