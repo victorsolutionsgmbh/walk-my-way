@@ -155,23 +155,31 @@ public class PostgresOsmProvider : IMapProvider
         double lat, double lng, int radiusMeters, string column, string[] values, bool openNow)
     {
         // Fetch more rows than needed so we still have enough after open-now filtering.
+        // LATERAL join finds the nearest street name for POIs that have no addr:street tag.
         var sql = $"""
-            SELECT osm_id::text,
-                   name,
-                   tags->'addr:street'      AS street,
-                   "addr:housenumber"       AS housenumber,
-                   tags->'addr:city'        AS city,
-                   ST_X(ST_Transform(way, 4326)) AS lng,
-                   ST_Y(ST_Transform(way, 4326)) AS lat,
-                   tags->'opening_hours'   AS opening_hours
-            FROM   planet_osm_point
-            WHERE  {column} = ANY(@values)
-              AND  name IS NOT NULL
+            SELECT p.osm_id::text,
+                   p.name,
+                   p.tags->'addr:street'      AS street,
+                   p."addr:housenumber"       AS housenumber,
+                   p.tags->'addr:city'        AS city,
+                   ST_X(ST_Transform(p.way, 4326)) AS lng,
+                   ST_Y(ST_Transform(p.way, 4326)) AS lat,
+                   p.tags->'opening_hours'   AS opening_hours,
+                   nearest.name              AS fallback_street
+            FROM   planet_osm_point p
+            LEFT JOIN LATERAL (
+                SELECT name FROM planet_osm_line
+                WHERE  highway IS NOT NULL AND name IS NOT NULL
+                ORDER BY way <-> p.way
+                LIMIT  1
+            ) nearest ON (p.tags->'addr:street') IS NULL
+            WHERE  p.{column} = ANY(@values)
+              AND  p.name IS NOT NULL
               AND  ST_DWithin(
-                     ST_Transform(way, 4326)::geography,
+                     ST_Transform(p.way, 4326)::geography,
                      ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
                      @radius)
-            ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
+            ORDER BY p.way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
             LIMIT  {(openNow ? 40 : 10)}
             """;
 
@@ -188,26 +196,33 @@ public class PostgresOsmProvider : IMapProvider
         double lat, double lng, int radiusMeters, string column, string[] values, bool openNow)
     {
         var sql = $"""
-            SELECT osm_id::text,
-                   name,
-                   tags->'addr:street'      AS street,
-                   "addr:housenumber"       AS housenumber,
-                   tags->'addr:city'        AS city,
-                   ST_X(ST_Centroid(ST_Transform(way, 4326))) AS lng,
-                   ST_Y(ST_Centroid(ST_Transform(way, 4326))) AS lat,
-                   ST_YMax(ST_Transform(ST_Envelope(way), 4326)) AS ne_lat,
-                   ST_XMax(ST_Transform(ST_Envelope(way), 4326)) AS ne_lng,
-                   ST_YMin(ST_Transform(ST_Envelope(way), 4326)) AS sw_lat,
-                   ST_XMin(ST_Transform(ST_Envelope(way), 4326)) AS sw_lng,
-                   tags->'opening_hours'   AS opening_hours
-            FROM   planet_osm_polygon
-            WHERE  {column} = ANY(@values)
-              AND  name IS NOT NULL
+            SELECT p.osm_id::text,
+                   p.name,
+                   p.tags->'addr:street'      AS street,
+                   p."addr:housenumber"       AS housenumber,
+                   p.tags->'addr:city'        AS city,
+                   ST_X(ST_Centroid(ST_Transform(p.way, 4326))) AS lng,
+                   ST_Y(ST_Centroid(ST_Transform(p.way, 4326))) AS lat,
+                   ST_YMax(ST_Transform(ST_Envelope(p.way), 4326)) AS ne_lat,
+                   ST_XMax(ST_Transform(ST_Envelope(p.way), 4326)) AS ne_lng,
+                   ST_YMin(ST_Transform(ST_Envelope(p.way), 4326)) AS sw_lat,
+                   ST_XMin(ST_Transform(ST_Envelope(p.way), 4326)) AS sw_lng,
+                   p.tags->'opening_hours'   AS opening_hours,
+                   nearest.name              AS fallback_street
+            FROM   planet_osm_polygon p
+            LEFT JOIN LATERAL (
+                SELECT name FROM planet_osm_line
+                WHERE  highway IS NOT NULL AND name IS NOT NULL
+                ORDER BY way <-> ST_Centroid(p.way)
+                LIMIT  1
+            ) nearest ON (p.tags->'addr:street') IS NULL
+            WHERE  p.{column} = ANY(@values)
+              AND  p.name IS NOT NULL
               AND  ST_DWithin(
-                     ST_Transform(way, 4326)::geography,
+                     ST_Transform(p.way, 4326)::geography,
                      ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
                      @radius)
-            ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
+            ORDER BY p.way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
             LIMIT  {(openNow ? 40 : 10)}
             """;
 
@@ -223,9 +238,10 @@ public class PostgresOsmProvider : IMapProvider
     private static async Task<List<PlaceCandidate>> ReadPlaceCandidates(
         NpgsqlCommand cmd, bool hasViewport, bool openNow)
     {
-        var results  = new List<PlaceCandidate>();
-        var now      = DateTime.Now;
-        int ohColumn = hasViewport ? 11 : 7;
+        var results        = new List<PlaceCandidate>();
+        var now            = DateTime.Now;
+        int ohColumn       = hasViewport ? 11 : 7;
+        int fallbackColumn = hasViewport ? 12 : 8;
 
         await using var reader = await cmd.ExecuteReaderAsync();
 
@@ -238,23 +254,32 @@ public class PostgresOsmProvider : IMapProvider
             if (openNow && (openingHours == null || !IsOpenNow(openingHours, now)))
                 continue;
 
-            var id          = reader.GetString(0);
-            var name        = reader.GetString(1);
-            var street      = reader.IsDBNull(2) ? null : reader.GetString(2);
-            var housenumber = reader.IsDBNull(3) ? null : reader.GetString(3);
-            var city        = reader.IsDBNull(4) ? null : reader.GetString(4);
-            var pLng        = reader.GetDouble(5);
-            var pLat        = reader.GetDouble(6);
+            var id             = reader.GetString(0);
+            var name           = reader.GetString(1);
+            var street         = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var housenumber    = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var city           = reader.IsDBNull(4) ? null : reader.GetString(4);
+            var pLng           = reader.GetDouble(5);
+            var pLat           = reader.GetDouble(6);
+            var fallbackStreet = reader.IsDBNull(fallbackColumn) ? null : reader.GetString(fallbackColumn);
 
             var viewport = hasViewport
                 ? (NeLat: reader.GetDouble(7), NeLng: reader.GetDouble(8),
                    SwLat: reader.GetDouble(9), SwLng: reader.GetDouble(10))
                 : default;
 
+            // If the POI has a real street address, use it. Otherwise fall back to
+            // "POI Name, nearest street" so the user can orient themselves.
+            var address = !string.IsNullOrEmpty(street)
+                ? FormatAddress(null, street, housenumber, city)
+                : !string.IsNullOrEmpty(fallbackStreet)
+                    ? $"{name}, {fallbackStreet}"
+                    : string.Empty;
+
             results.Add(new PlaceCandidate(
                 PlaceId:          id,
                 Name:             name,
-                Address:          FormatAddress(null, street, housenumber, city),
+                Address:          address,
                 Rating:           0,
                 UserRatingsTotal: 0,
                 Latitude:         pLat,
