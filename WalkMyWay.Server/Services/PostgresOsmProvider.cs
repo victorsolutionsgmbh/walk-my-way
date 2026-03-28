@@ -143,26 +143,27 @@ public class PostgresOsmProvider : IMapProvider
     public async Task<List<PlaceCandidate>> SearchPlacesNearbyAsync(
         double lat, double lng, int radiusMeters, string type, bool openNow)
     {
-        // openNow: OSM has no real-time open/closed data — parameter is silently ignored.
         var (table, column, values) = GetOsmFilter(type);
 
         if (table == "planet_osm_polygon")
-            return await SearchPolygonsNearbyAsync(lat, lng, radiusMeters, column, values);
+            return await SearchPolygonsNearbyAsync(lat, lng, radiusMeters, column, values, openNow);
 
-        return await SearchPointsNearbyAsync(lat, lng, radiusMeters, column, values);
+        return await SearchPointsNearbyAsync(lat, lng, radiusMeters, column, values, openNow);
     }
 
     private async Task<List<PlaceCandidate>> SearchPointsNearbyAsync(
-        double lat, double lng, int radiusMeters, string column, string[] values)
+        double lat, double lng, int radiusMeters, string column, string[] values, bool openNow)
     {
+        // Fetch more rows than needed so we still have enough after open-now filtering.
         var sql = $"""
             SELECT osm_id::text,
                    name,
                    tags->'addr:street'      AS street,
-                   "addr:housenumber" AS housenumber,
+                   "addr:housenumber"       AS housenumber,
                    tags->'addr:city'        AS city,
                    ST_X(ST_Transform(way, 4326)) AS lng,
-                   ST_Y(ST_Transform(way, 4326)) AS lat
+                   ST_Y(ST_Transform(way, 4326)) AS lat,
+                   tags->'opening_hours'   AS opening_hours
             FROM   planet_osm_point
             WHERE  {column} = ANY(@values)
               AND  name IS NOT NULL
@@ -171,7 +172,7 @@ public class PostgresOsmProvider : IMapProvider
                      ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
                      @radius)
             ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
-            LIMIT  10
+            LIMIT  {(openNow ? 40 : 10)}
             """;
 
         await using var cmd = _db.CreateCommand(sql);
@@ -180,24 +181,25 @@ public class PostgresOsmProvider : IMapProvider
         cmd.Parameters.AddWithValue("lat", lat);
         cmd.Parameters.AddWithValue("radius", radiusMeters);
 
-        return await ReadPlaceCandidates(cmd, hasViewport: false);
+        return await ReadPlaceCandidates(cmd, hasViewport: false, openNow);
     }
 
     private async Task<List<PlaceCandidate>> SearchPolygonsNearbyAsync(
-        double lat, double lng, int radiusMeters, string column, string[] values)
+        double lat, double lng, int radiusMeters, string column, string[] values, bool openNow)
     {
         var sql = $"""
             SELECT osm_id::text,
                    name,
                    tags->'addr:street'      AS street,
-                   "addr:housenumber" AS housenumber,
+                   "addr:housenumber"       AS housenumber,
                    tags->'addr:city'        AS city,
                    ST_X(ST_Centroid(ST_Transform(way, 4326))) AS lng,
                    ST_Y(ST_Centroid(ST_Transform(way, 4326))) AS lat,
                    ST_YMax(ST_Transform(ST_Envelope(way), 4326)) AS ne_lat,
                    ST_XMax(ST_Transform(ST_Envelope(way), 4326)) AS ne_lng,
                    ST_YMin(ST_Transform(ST_Envelope(way), 4326)) AS sw_lat,
-                   ST_XMin(ST_Transform(ST_Envelope(way), 4326)) AS sw_lng
+                   ST_XMin(ST_Transform(ST_Envelope(way), 4326)) AS sw_lng,
+                   tags->'opening_hours'   AS opening_hours
             FROM   planet_osm_polygon
             WHERE  {column} = ANY(@values)
               AND  name IS NOT NULL
@@ -206,7 +208,7 @@ public class PostgresOsmProvider : IMapProvider
                      ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
                      @radius)
             ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
-            LIMIT  10
+            LIMIT  {(openNow ? 40 : 10)}
             """;
 
         await using var cmd = _db.CreateCommand(sql);
@@ -215,16 +217,27 @@ public class PostgresOsmProvider : IMapProvider
         cmd.Parameters.AddWithValue("lat", lat);
         cmd.Parameters.AddWithValue("radius", radiusMeters);
 
-        return await ReadPlaceCandidates(cmd, hasViewport: true);
+        return await ReadPlaceCandidates(cmd, hasViewport: true, openNow);
     }
 
-    private static async Task<List<PlaceCandidate>> ReadPlaceCandidates(NpgsqlCommand cmd, bool hasViewport)
+    private static async Task<List<PlaceCandidate>> ReadPlaceCandidates(
+        NpgsqlCommand cmd, bool hasViewport, bool openNow)
     {
-        var results = new List<PlaceCandidate>();
+        var results  = new List<PlaceCandidate>();
+        var now      = DateTime.Now;
+        int ohColumn = hasViewport ? 11 : 7;
+
         await using var reader = await cmd.ExecuteReaderAsync();
 
         while (await reader.ReadAsync())
         {
+            var openingHours = reader.IsDBNull(ohColumn) ? null : reader.GetString(ohColumn);
+
+            // When openNow is requested, only keep places that have opening_hours data
+            // AND are currently open. Places without opening_hours are excluded.
+            if (openNow && (openingHours == null || !IsOpenNow(openingHours, now)))
+                continue;
+
             var id          = reader.GetString(0);
             var name        = reader.GetString(1);
             var street      = reader.IsDBNull(2) ? null : reader.GetString(2);
@@ -238,17 +251,17 @@ public class PostgresOsmProvider : IMapProvider
                    SwLat: reader.GetDouble(9), SwLng: reader.GetDouble(10))
                 : default;
 
-            var address = FormatAddress(null, street, housenumber, city);
-
             results.Add(new PlaceCandidate(
                 PlaceId:          id,
                 Name:             name,
-                Address:          address,
-                Rating:           0,    // OSM has no ratings
+                Address:          FormatAddress(null, street, housenumber, city),
+                Rating:           0,
                 UserRatingsTotal: 0,
                 Latitude:         pLat,
                 Longitude:        pLng,
                 Viewport:         viewport));
+
+            if (results.Count == 10) break;
         }
 
         return results;
@@ -511,6 +524,96 @@ public class PostgresOsmProvider : IMapProvider
             "park" or "parks"                    => ("planet_osm_polygon", "leisure", ["park", "garden"]),
             var t                                => ("planet_osm_point",   "amenity", [t])
         };
+
+    // ── Opening hours parser ───────────────────────────────────────────────────
+    // Handles the most common OSM opening_hours patterns:
+    //   24/7 · off · Mo-Fr 09:00-18:00 · Mo,Sa 10:00-20:00 · 08:00-22:00
+    //   multiple rules separated by ";" · overnight ranges (22:00-02:00)
+    // Unknown / unparseable values → treated as open (unknown ≠ closed).
+
+    // OSM day index: Mo=0 .. Su=6; maps from .NET DayOfWeek (Sun=0..Sat=6)
+    private static readonly int[] DotNetToOsm = [6, 0, 1, 2, 3, 4, 5];
+    private static readonly string[] OsmDays   = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+    private static bool IsOpenNow(string openingHours, DateTime now)
+    {
+        var oh = openingHours.Trim();
+        if (oh.Equals("24/7", StringComparison.OrdinalIgnoreCase)) return true;
+        if (oh.Equals("off",  StringComparison.OrdinalIgnoreCase)) return false;
+
+        foreach (var rule in oh.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            if (EvaluateRule(rule, now)) return true;
+
+        return false;
+    }
+
+    private static bool EvaluateRule(string rule, DateTime now)
+    {
+        if (rule.Equals("24/7", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.Equals("off",  StringComparison.OrdinalIgnoreCase)) return false;
+
+        // Split into optional day-selector and time ranges: "Mo-Fr 09:00-18:00"
+        var spaceIdx = rule.IndexOf(' ');
+        string? dayPart  = null;
+        string  timePart;
+
+        if (spaceIdx > 0 && !rule[..spaceIdx].Contains(':'))
+        {
+            dayPart  = rule[..spaceIdx];
+            timePart = rule[(spaceIdx + 1)..].Trim();
+        }
+        else
+        {
+            timePart = rule;
+        }
+
+        if (dayPart != null && !DayMatches(dayPart, now.DayOfWeek))
+            return false;
+
+        return TimeMatches(timePart, now.TimeOfDay);
+    }
+
+    private static bool DayMatches(string dayPart, DayOfWeek dow)
+    {
+        int osmNow = DotNetToOsm[(int)dow];
+        foreach (var seg in dayPart.Split(',', StringSplitOptions.TrimEntries))
+        {
+            if (seg.Contains('-'))
+            {
+                var p = seg.Split('-');
+                int from = Array.IndexOf(OsmDays, p[0].Trim());
+                int to   = Array.IndexOf(OsmDays, p[1].Trim());
+                if (from < 0 || to < 0) return true; // unparseable → don't filter
+                bool inRange = from <= to
+                    ? osmNow >= from && osmNow <= to
+                    : osmNow >= from || osmNow <= to; // wraps (e.g. Sa-Mo)
+                if (inRange) return true;
+            }
+            else
+            {
+                int idx = Array.IndexOf(OsmDays, seg.Trim());
+                if (idx == osmNow) return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool TimeMatches(string timePart, TimeSpan current)
+    {
+        foreach (var range in timePart.Split(',', StringSplitOptions.TrimEntries))
+        {
+            var dash = range.LastIndexOf('-'); // use LastIndexOf to avoid matching minus in "24:00"
+            if (dash <= 0) continue;
+            if (!TimeSpan.TryParse(range[..dash].Trim(),       out var start)) continue;
+            if (!TimeSpan.TryParse(range[(dash + 1)..].Trim(), out var end))   continue;
+
+            bool open = end < start                         // overnight: 22:00-02:00
+                ? current >= start || current < end
+                : current >= start && current < end;
+            if (open) return true;
+        }
+        return false;
+    }
 
     private static string FormatAddress(string? name, string? street, string? housenumber, string? city)
     {
