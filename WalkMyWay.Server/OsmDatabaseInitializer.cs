@@ -15,6 +15,8 @@ public static class OsmDatabaseInitializer
 
         try
         {
+            await EnsureDatabaseExistsAsync(connectionString, logger);
+
             if (await IsDatabasePopulatedAsync(connectionString, logger))
             {
                 logger.LogInformation("OSM database already populated. Skipping initialization.");
@@ -41,6 +43,41 @@ public static class OsmDatabaseInitializer
             logger.LogCritical(ex, "Fatal error during OSM database initialization. Terminating container.");
             Environment.Exit(1);
         }
+    }
+
+    private static async Task EnsureDatabaseExistsAsync(string connectionString, ILogger logger)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        var targetDatabase = builder.Database
+            ?? throw new InvalidOperationException("No database name found in connection string.");
+
+        // Connect to the postgres maintenance DB to check/create the target database
+        builder.Database = "postgres";
+        var maintenanceConnString = builder.ToString();
+
+        await using var conn = new NpgsqlConnection(maintenanceConnString);
+        await conn.OpenAsync();
+
+        await using var checkCmd = new NpgsqlCommand(
+            "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
+            conn);
+        checkCmd.Parameters.AddWithValue(targetDatabase);
+
+        var exists = await checkCmd.ExecuteScalarAsync() is true;
+
+        if (exists)
+        {
+            logger.LogInformation("Database '{Database}' already exists.", targetDatabase);
+            return;
+        }
+
+        logger.LogInformation("Database '{Database}' does not exist. Creating...", targetDatabase);
+
+        // Database names cannot be parameterized in DDL — use NpgsqlConnectionStringBuilder to ensure it's a safe identifier
+        await using var createCmd = new NpgsqlCommand($"CREATE DATABASE \"{targetDatabase}\"", conn);
+        await createCmd.ExecuteNonQueryAsync();
+
+        logger.LogInformation("Database '{Database}' created successfully.", targetDatabase);
     }
 
     private static async Task<bool> IsDatabasePopulatedAsync(string connectionString, ILogger logger)
