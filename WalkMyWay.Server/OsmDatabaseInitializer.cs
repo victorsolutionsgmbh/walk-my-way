@@ -16,6 +16,7 @@ public static class OsmDatabaseInitializer
         try
         {
             await EnsureDatabaseExistsAsync(connectionString, logger);
+            await EnsureExtensionsAsync(connectionString, logger);
 
             if (await IsDatabasePopulatedAsync(connectionString, logger))
             {
@@ -26,7 +27,6 @@ public static class OsmDatabaseInitializer
             logger.LogInformation("OSM database is empty or tables are missing. Starting full import...");
 
             var pbfPath = await DownloadOsmDataAsync(logger);
-            await CreateExtensionsAsync(connectionString, logger);
             await RunOsm2PgsqlAsync(connectionString, pbfPath, logger);
 
             logger.LogInformation("Verifying database after import...");
@@ -156,18 +156,22 @@ public static class OsmDatabaseInitializer
         return pbfPath;
     }
 
-    private static async Task CreateExtensionsAsync(string connectionString, ILogger logger)
+    private static async Task EnsureExtensionsAsync(string connectionString, ILogger logger)
     {
-        logger.LogInformation("Creating PostGIS and hstore extensions...");
+        logger.LogInformation("Ensuring required PostgreSQL extensions are installed...");
 
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync();
 
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS hstore;";
+        cmd.CommandText = """
+            CREATE EXTENSION IF NOT EXISTS postgis;
+            CREATE EXTENSION IF NOT EXISTS hstore;
+            CREATE EXTENSION IF NOT EXISTS pg_trgm;
+            """;
         await cmd.ExecuteNonQueryAsync();
 
-        logger.LogInformation("Extensions created successfully.");
+        logger.LogInformation("Extensions ready (postgis, hstore, pg_trgm).");
     }
 
     private static async Task RunOsm2PgsqlAsync(string connectionString, string pbfPath, ILogger logger)
