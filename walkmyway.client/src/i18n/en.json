@@ -1,0 +1,73 @@
+{
+  "header": {
+    "title": "Walk My Way",
+    "subtitle": "Discover your perfect walking route"
+  },
+  "location": {
+    "loading": "Requesting your location\u2026",
+    "card_title": "Your Location",
+    "current_position": "Current Position",
+    "unavailable_title": "Location Unavailable",
+    "unavailable_body": "Walk My Way requires your precise location to calculate personalized walking routes. Please allow location access in your browser and try again.",
+    "try_again": "Try Again",
+    "error_not_supported": "Your browser does not support geolocation.",
+    "error_denied": "Location permission was denied. Please allow access in your browser settings.",
+    "error_unavailable": "Your position could not be determined. Please check your device settings.",
+    "error_timeout": "Location request timed out. Retrying without high accuracy\u2026",
+    "error_timeout_final": "Location request timed out. Please check your connection and try again.",
+    "error_unknown": "An unknown location error occurred."
+  },
+  "route": {
+    "card_title": "Find Your Route",
+    "destination_label": "Destination",
+    "destination_placeholder": "Enter destination address\u2026",
+    "find_button": "Find Route",
+    "calculating": "Calculating Route\u2026",
+    "error_no_destination": "Please enter a destination address.",
+    "error_failed": "Failed to calculate route.",
+    "error_server": "Unable to connect to the server. Please try again."
+  },
+  "autocomplete": {
+    "searching": "Searching\u2026",
+    "no_results": "No results found within 15\u00a0km of your location."
+  },
+  "stops": {
+    "title": "Stops Along the Way",
+    "used": "{{n}} / {{max}} stops used",
+    "add": "+ Add",
+    "preserve_order": "Keep stop order (drag to reorder)",
+    "empty_before": "No stops added. Click",
+    "empty_after": "to include places along your route.",
+    "open_now": "Open now"
+  },
+  "pref": {
+    "cafe": "Cafe / Coffee",
+    "park": "Park",
+    "restaurant": "Restaurant",
+    "bakery": "Bakery",
+    "supermarket": "Supermarket",
+    "pharmacy": "Pharmacy",
+    "bar": "Bar / Pub",
+    "museum": "Museum",
+    "gym": "Gym / Fitness",
+    "library": "Library",
+    "bank": "Bank / ATM",
+    "convenience_store": "Convenience Store"
+  },
+  "result": {
+    "card_title": "Route Ready",
+    "from": "From",
+    "to": "To",
+    "stops_one": "{{n}} Stop Along Your Route",
+    "stops_other": "{{n}} Stops Along Your Route",
+    "no_stops": "No matching stops were found along this route for your selected preferences.",
+    "open_maps": "Open in Google Maps",
+    "badge_open": "Open now",
+    "badge_closed": "Closed"
+  },
+  "region": {
+    "unavailable_title": "Not Available in Your Region",
+    "unavailable_body": "Walk My Way is currently only available in Austria. We\u2019re working on expanding to more regions soon."
+  },
+  "footer": "© {{year}} Victorsolutions GmbH"
+}

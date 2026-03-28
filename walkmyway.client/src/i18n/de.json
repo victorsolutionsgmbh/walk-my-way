@@ -1,0 +1,73 @@
+{
+  "header": {
+    "title": "Walk My Way",
+    "subtitle": "Entdecke deine perfekte Spazierroute"
+  },
+  "location": {
+    "loading": "Standort wird ermittelt\u2026",
+    "card_title": "Dein Standort",
+    "current_position": "Aktueller Standort",
+    "unavailable_title": "Standort nicht verf\u00fcgbar",
+    "unavailable_body": "Walk My Way ben\u00f6tigt deinen genauen Standort, um personalisierte Spazierrouten zu berechnen. Bitte erlaube den Standortzugriff in deinem Browser und versuche es erneut.",
+    "try_again": "Erneut versuchen",
+    "error_not_supported": "Dein Browser unterst\u00fctzt keine Geolokalisierung.",
+    "error_denied": "Standortzugriff wurde verweigert. Bitte erlaube den Zugriff in deinen Browsereinstellungen.",
+    "error_unavailable": "Dein Standort konnte nicht ermittelt werden. Bitte \u00fcberpr\u00fcfe deine Ger\u00e4teeinstellungen.",
+    "error_timeout": "Standortanfrage hat zu lange gedauert. Wiederhole ohne hohe Genauigkeit\u2026",
+    "error_timeout_final": "Standortanfrage hat zu lange gedauert. Bitte \u00fcberpr\u00fcfe deine Verbindung und versuche es erneut.",
+    "error_unknown": "Ein unbekannter Standortfehler ist aufgetreten."
+  },
+  "route": {
+    "card_title": "Route finden",
+    "destination_label": "Ziel",
+    "destination_placeholder": "Zieladresse eingeben\u2026",
+    "find_button": "Route berechnen",
+    "calculating": "Route wird berechnet\u2026",
+    "error_no_destination": "Bitte gib eine Zieladresse ein.",
+    "error_failed": "Route konnte nicht berechnet werden.",
+    "error_server": "Verbindung zum Server fehlgeschlagen. Bitte versuche es erneut."
+  },
+  "autocomplete": {
+    "searching": "Suche l\u00e4uft\u2026",
+    "no_results": "Keine Ergebnisse im Umkreis von 15\u00a0km gefunden."
+  },
+  "stops": {
+    "title": "Zwischenstopps",
+    "used": "{{n}} / {{max}} Stopps verwendet",
+    "add": "+ Hinzuf\u00fcgen",
+    "preserve_order": "Reihenfolge beibehalten (zum Sortieren ziehen)",
+    "empty_before": "Keine Stopps hinzugef\u00fcgt. Klicke auf",
+    "empty_after": "um Orte auf deiner Route einzuf\u00fcgen.",
+    "open_now": "Jetzt ge\u00f6ffnet"
+  },
+  "pref": {
+    "cafe": "Caf\u00e9 / Kaffee",
+    "park": "Park",
+    "restaurant": "Restaurant",
+    "bakery": "B\u00e4ckerei",
+    "supermarket": "Supermarkt",
+    "pharmacy": "Apotheke",
+    "bar": "Bar / Pub",
+    "museum": "Museum",
+    "gym": "Fitnessstudio",
+    "library": "Bibliothek",
+    "bank": "Bank / Bankomat",
+    "convenience_store": "Kleines Gesch\u00e4ft"
+  },
+  "result": {
+    "card_title": "Route bereit",
+    "from": "Von",
+    "to": "Nach",
+    "stops_one": "{{n}} Stopp auf deiner Route",
+    "stops_other": "{{n}} Stopps auf deiner Route",
+    "no_stops": "Entlang dieser Route wurden keine passenden Stopps f\u00fcr deine Auswahl gefunden.",
+    "open_maps": "In Google Maps \u00f6ffnen",
+    "badge_open": "Jetzt ge\u00f6ffnet",
+    "badge_closed": "Geschlossen"
+  },
+  "region": {
+    "unavailable_title": "In deiner Region nicht verf\u00fcgbar",
+    "unavailable_body": "Walk My Way ist derzeit nur in \u00d6sterreich verf\u00fcgbar. Wir arbeiten daran, das Tool bald in weiteren Regionen anzubieten."
+  },
+  "footer": "© {{year}} Victorsolutions GmbH"
+}
