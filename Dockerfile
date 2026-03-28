@@ -11,6 +11,7 @@ EXPOSE 8081
 # Diese Stufe wird zum Erstellen des Dienstprojekts verwendet.
 FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
 ARG BUILD_CONFIGURATION=Release
+RUN apk add --no-cache nodejs npm
 WORKDIR /src
 COPY ["WalkMyWay.Server/WalkMyWay.Server.csproj", "WalkMyWay.Server/"]
 COPY ["walkmyway.client/walkmyway.client.esproj", "walkmyway.client/"]
