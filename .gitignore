@@ -102,3 +102,4 @@ dist-ssr
 *.sln
 *.sw?
 /walkmyway.client/.vscode
+/WalkMyWay.Server/WalkMyWay.Server.csproj.user
