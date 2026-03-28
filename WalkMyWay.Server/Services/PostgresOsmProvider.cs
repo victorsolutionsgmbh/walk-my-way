@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -27,6 +28,21 @@ public class PostgresOsmProvider : IMapProvider
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly SemaphoreSlim _rateLimiter = new(1, 1);
+
+    // ── Reverse-geocode cache ───────────────────────────────────────────────────
+    // Key: lat/lng rounded to 4 decimal places (~11 m precision).
+    // Bounded to 500 entries; cleared wholesale when full (simple, allocation-free eviction).
+    private static readonly ConcurrentDictionary<string, string> _geocodeCache = new();
+    private const int GeoCacheMaxSize = 500;
+    private static string GeoCacheKey(double lat, double lng) => $"{lat:F4},{lng:F4}";
+
+    // ── Autocomplete cache ──────────────────────────────────────────────────────
+    // Key: trimmed lower-case input + location rounded to ~1 km (F2).
+    // Autocomplete results are stable between OSM imports, so no expiry needed.
+    private static readonly ConcurrentDictionary<string, List<PlaceSuggestion>> _autocompleteCache = new();
+    private const int AutocompleteCacheMaxSize = 200;
+    private static string AutocompleteCacheKey(string q, double? lat, double? lng) =>
+        $"{q.ToLowerInvariant()}|{(lat.HasValue ? $"{lat:F2}" : "_")}|{(lng.HasValue ? $"{lng:F2}" : "_")}";
     private static DateTime _lastRequestTime = DateTime.MinValue;
     private const int MinRequestIntervalMs = 150;
 
@@ -47,73 +63,93 @@ public class PostgresOsmProvider : IMapProvider
 
     public async Task<string> ReverseGeocodeAsync(double lat, double lng)
     {
-        // 1. Try nearest address within 100 m — checks both point nodes and building polygons
-        //    because OSM Vienna data stores most addresses as polygon tags, not standalone points.
-        const string addrSql = """
-            SELECT street, housenumber, city
+        var cacheKey = GeoCacheKey(lat, lng);
+        if (_geocodeCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        // Single round-trip: address point → address polygon → nearest street (by priority).
+        // Uses native EPSG:3857 KNN (<->) so PostGIS can use the GIST index on `way` directly.
+        // The ST_Expand bounding-box pre-filter (~150 m at Vienna lat) limits the index scan
+        // to a tiny neighbourhood before the exact KNN sort.
+        const string sql = """
+            WITH pt AS (
+                SELECT ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857) AS geom
+            )
+            SELECT prio, street, nr, city
             FROM (
-                SELECT tags->'addr:street'      AS street,
-                       "addr:housenumber" AS housenumber,
-                       tags->'addr:city'        AS city,
-                       way
-                FROM   planet_osm_point
-                WHERE  (tags->'addr:street')      IS NOT NULL
-                  AND  ("addr:housenumber") IS NOT NULL
+                -- 1. Address node (point)
+                (
+                    SELECT 1                       AS prio,
+                           tags->'addr:street'     AS street,
+                           "addr:housenumber"      AS nr,
+                           tags->'addr:city'       AS city,
+                           way <-> pt.geom         AS dist
+                    FROM   planet_osm_point, pt
+                    WHERE  tags->'addr:street' IS NOT NULL
+                      AND  "addr:housenumber"  IS NOT NULL
+                      AND  way && ST_Expand(pt.geom, 200)
+                    ORDER BY dist
+                    LIMIT  1
+                )
                 UNION ALL
-                SELECT tags->'addr:street'      AS street,
-                       "addr:housenumber" AS housenumber,
-                       tags->'addr:city'        AS city,
-                       ST_Centroid(way)         AS way
-                FROM   planet_osm_polygon
-                WHERE  (tags->'addr:street')      IS NOT NULL
-                  AND  ("addr:housenumber") IS NOT NULL
-            ) addr
-            WHERE ST_DWithin(
-                    ST_Transform(way, 4326)::geography,
-                    ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
-                    100)
-            ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
+                -- 2. Address building polygon
+                (
+                    SELECT 2,
+                           tags->'addr:street',
+                           "addr:housenumber",
+                           tags->'addr:city',
+                           way <-> pt.geom
+                    FROM   planet_osm_polygon, pt
+                    WHERE  tags->'addr:street' IS NOT NULL
+                      AND  "addr:housenumber"  IS NOT NULL
+                      AND  way && ST_Expand(pt.geom, 200)
+                    ORDER BY way <-> pt.geom
+                    LIMIT  1
+                )
+                UNION ALL
+                -- 3. Nearest named street (fallback — no radius limit, pure KNN)
+                (
+                    SELECT 3,
+                           name,
+                           NULL,
+                           NULL,
+                           way <-> pt.geom
+                    FROM   planet_osm_line, pt
+                    WHERE  name    IS NOT NULL
+                      AND  highway IS NOT NULL
+                    ORDER BY way <-> pt.geom
+                    LIMIT  1
+                )
+            ) candidates
+            ORDER BY prio, dist
             LIMIT  1
             """;
 
-        await using (var cmd = _db.CreateCommand(addrSql))
+        await using var cmd = _db.CreateCommand(sql);
+        cmd.Parameters.AddWithValue("lng", lng);
+        cmd.Parameters.AddWithValue("lat", lat);
+
+        await using var r = await cmd.ExecuteReaderAsync();
+        string result;
+        if (await r.ReadAsync())
         {
-            cmd.Parameters.AddWithValue("lng", lng);
-            cmd.Parameters.AddWithValue("lat", lat);
-            await using var r = await cmd.ExecuteReaderAsync();
-            if (await r.ReadAsync())
-            {
-                var street = r.IsDBNull(0) ? null : r.GetString(0);
-                var nr     = r.IsDBNull(1) ? null : r.GetString(1);
-                var city   = r.IsDBNull(2) ? null : r.GetString(2);
-                var addr   = FormatAddress(null, street, nr, city);
-                if (!string.IsNullOrEmpty(addr)) return addr;
-            }
+            var street = r.IsDBNull(1) ? null : r.GetString(1);
+            var nr     = r.IsDBNull(2) ? null : r.GetString(2);
+            var city   = r.IsDBNull(3) ? null : r.GetString(3);
+            result = FormatAddress(null, street, nr, city);
+            if (string.IsNullOrEmpty(result))
+                result = $"{lat:F6}, {lng:F6}";
+        }
+        else
+        {
+            result = $"{lat:F6}, {lng:F6}";
         }
 
-        // 2. Fall back to nearest street name (more useful than a random named POI)
-        const string streetSql = """
-            SELECT name
-            FROM   planet_osm_line
-            WHERE  name IS NOT NULL
-              AND  highway IS NOT NULL
-            ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
-            LIMIT  1
-            """;
+        if (_geocodeCache.Count >= GeoCacheMaxSize)
+            _geocodeCache.Clear();
+        _geocodeCache[cacheKey] = result;
 
-        await using (var cmd = _db.CreateCommand(streetSql))
-        {
-            cmd.Parameters.AddWithValue("lng", lng);
-            cmd.Parameters.AddWithValue("lat", lat);
-            await using var r = await cmd.ExecuteReaderAsync();
-            if (await r.ReadAsync())
-            {
-                var street = r.IsDBNull(0) ? null : r.GetString(0);
-                if (!string.IsNullOrEmpty(street)) return street;
-            }
-        }
-
-        return $"{lat:F6}, {lng:F6}";
+        return result;
     }
 
     // ── Walking route — Google Maps Directions API ─────────────────────────────
@@ -310,21 +346,20 @@ public class PostgresOsmProvider : IMapProvider
         var startsWith = $"{q}%";
         var hasDigit   = q.Any(char.IsDigit);
 
-        var proximitySelect = (lat.HasValue && lng.HasValue)
-            ? "ST_Distance(ST_SetSRID(ST_MakePoint(sub.lng, sub.lat), 4326)::geography, ST_SetSRID(ST_MakePoint(@userLng, @userLat), 4326)::geography)"
-            : "0";
+        var cacheKey = AutocompleteCacheKey(q, lat, lng);
+        if (_autocompleteCache.TryGetValue(cacheKey, out var cached))
+            return cached;
 
-        // Spatial filter in native EPSG:3857 — avoids per-row geography cast and lets
-        // PostgreSQL use the GiST index on `way` directly.
-        // 20 000 Cartesian units ≈ 13 km geographic at ~48° N latitude, which is
-        // more than enough for pedestrian-route autocomplete within a city.
+        // Planar degree-distance squared — no geography cast, no function call,
+        // perfectly sufficient for ordering within city bounds (~50 km radius).
+        var proximitySelect = (lat.HasValue && lng.HasValue)
+            ? "(sub.lng - @nearLng) * (sub.lng - @nearLng) + (sub.lat - @nearLat) * (sub.lat - @nearLat)"
+            : "0::float8";
+
+        // Bounding-box radius filter using the pre-computed near_pt CTE.
+        // 20 000 EPSG:3857 units ≈ 13 km geographic at ~48° N — enough for city autocomplete.
         var radiusFilter = (lat.HasValue && lng.HasValue)
-            ? """
-              AND ST_DWithin(
-                    way,
-                    ST_Transform(ST_SetSRID(ST_MakePoint(@userLng, @userLat), 4326), 3857),
-                    20000)
-              """
+            ? "AND way && ST_Expand((SELECT geom FROM near_pt), 20000)"
             : "";
 
         // Inline SQL expression that formats a full address (street + housenumber + city)
@@ -389,10 +424,14 @@ public class PostgresOsmProvider : IMapProvider
                 """ : "";
 
         // mrank: 0 = prefix match, 1 = substring match, 2 = trigram-only (typo) match.
-        // Each branch is capped with LIMIT 20 before the outer dedup to avoid scanning
-        // more rows than necessary. DISTINCT ON then picks the best match per name.
+        // near_pt CTE pre-computes the EPSG:3857 user point once — referenced in every
+        // ORDER BY and radiusFilter instead of repeating ST_Transform(ST_SetSRID(...)).
+        // DISTINCT ON ORDER BY uses the `prox` alias to avoid recomputing proximitySelect.
         // Column order: name(0), city(1), lng(2), lat(3), address(4)
         var sql = $"""
+            WITH near_pt AS (
+                SELECT ST_Transform(ST_SetSRID(ST_MakePoint(@nearLng, @nearLat), 4326), 3857) AS geom
+            )
             SELECT name, city, lng, lat, address
             FROM (
                 SELECT DISTINCT ON (lower(sub.name))
@@ -410,14 +449,14 @@ public class PostgresOsmProvider : IMapProvider
                                     ELSE                             2 END AS mrank,
                                0 AS src,
                                {addrExpr} AS address
-                        FROM   planet_osm_point
+                        FROM   planet_osm_point, near_pt
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  name IS NOT NULL
                           {radiusFilter}
                         ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                       WHEN name ILIKE @pattern    THEN 1
                                       ELSE                             2 END,
-                                 way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@nearLng, @nearLat), 4326), 3857)
+                                 way <-> near_pt.geom
                         LIMIT  20
                     )
 
@@ -436,12 +475,12 @@ public class PostgresOsmProvider : IMapProvider
                                         ELSE                             2 END AS mrank,
                                    1 AS src,
                                    NULL::text AS address
-                            FROM   planet_osm_line
+                            FROM   planet_osm_line, near_pt
                             WHERE  (name ILIKE @pattern OR name % @q)
                               AND  highway IS NOT NULL
                               {radiusFilter}
                             ORDER BY name,
-                                     way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@nearLng, @nearLat), 4326), 3857)
+                                     way <-> near_pt.geom
                             LIMIT  20
                         ) _streets
                     )
@@ -459,7 +498,7 @@ public class PostgresOsmProvider : IMapProvider
                                     ELSE                             2 END AS mrank,
                                0 AS src,
                                {addrExpr} AS address
-                        FROM   planet_osm_polygon
+                        FROM   planet_osm_polygon, near_pt
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  (place IS NOT NULL OR leisure IS NOT NULL
                                 OR landuse IS NOT NULL OR amenity IS NOT NULL)
@@ -467,28 +506,24 @@ public class PostgresOsmProvider : IMapProvider
                         ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                       WHEN name ILIKE @pattern    THEN 1
                                       ELSE                             2 END,
-                                 way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@nearLng, @nearLat), 4326), 3857)
+                                 way <-> near_pt.geom
                         LIMIT  20
                     ){addressUnion}
                 ) sub
-                ORDER BY lower(sub.name), sub.mrank, sub.src, {proximitySelect}
+                ORDER BY lower(sub.name), sub.mrank, sub.src, prox
             ) deduped
             ORDER BY mrank, src, prox
             LIMIT 5
             """;
 
         await using var cmd = _db.CreateCommand(sql);
-        cmd.Parameters.AddWithValue("pattern", pattern);
+        cmd.Parameters.AddWithValue("pattern",    pattern);
         cmd.Parameters.AddWithValue("startsWith", startsWith);
-        cmd.Parameters.AddWithValue("q", q);
-        // nearLng/nearLat used for street dedup ordering — fall back to Vienna centre
+        cmd.Parameters.AddWithValue("q",          q);
+        // @nearLng/@nearLat serve as both the KNN anchor and the proximity/radius reference.
+        // Falls back to Vienna centre when the caller has no location.
         cmd.Parameters.AddWithValue("nearLng", lng ?? 16.37);
         cmd.Parameters.AddWithValue("nearLat", lat ?? 48.21);
-        if (lat.HasValue && lng.HasValue)
-        {
-            cmd.Parameters.AddWithValue("userLat", lat.Value);
-            cmd.Parameters.AddWithValue("userLng", lng.Value);
-        }
 
         var results = new List<PlaceSuggestion>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -507,6 +542,10 @@ public class PostgresOsmProvider : IMapProvider
                 PlaceId     = $"{pLat.ToString(CultureInfo.InvariantCulture)},{pLng.ToString(CultureInfo.InvariantCulture)}"
             });
         }
+
+        if (_autocompleteCache.Count >= AutocompleteCacheMaxSize)
+            _autocompleteCache.Clear();
+        _autocompleteCache[cacheKey] = results;
 
         return results;
     }

@@ -21,6 +21,7 @@ public static class OsmDatabaseInitializer
             if (await IsDatabasePopulatedAsync(connectionString, logger))
             {
                 logger.LogInformation("OSM database already populated. Skipping initialization.");
+                await EnsureIndexesAsync(connectionString, logger);
                 return;
             }
 
@@ -36,6 +37,7 @@ public static class OsmDatabaseInitializer
                 Environment.Exit(1);
             }
 
+            await EnsureIndexesAsync(connectionString, logger);
             logger.LogInformation("=== OSM Database initialized successfully ===");
         }
         catch (Exception ex)
@@ -172,6 +174,35 @@ public static class OsmDatabaseInitializer
         await cmd.ExecuteNonQueryAsync();
 
         logger.LogInformation("Extensions ready (postgis, hstore, pg_trgm).");
+    }
+
+    private static async Task EnsureIndexesAsync(string connectionString, ILogger logger)
+    {
+        logger.LogInformation("Ensuring autocomplete indexes exist (this may take a few minutes on first run)...");
+
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        // Trigram GIN indexes on `name` — enable fast ILIKE '%q%' and similarity `%` operator
+        // used by autocomplete. osm2pgsql does not create these automatically.
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 600; // index creation on large tables can take several minutes
+        cmd.CommandText = """
+            CREATE INDEX IF NOT EXISTS idx_osm_point_name_trgm
+                ON planet_osm_point USING GIN (name gin_trgm_ops)
+                WHERE name IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_osm_line_name_trgm
+                ON planet_osm_line USING GIN (name gin_trgm_ops)
+                WHERE name IS NOT NULL AND highway IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_osm_polygon_name_trgm
+                ON planet_osm_polygon USING GIN (name gin_trgm_ops)
+                WHERE name IS NOT NULL;
+            """;
+        await cmd.ExecuteNonQueryAsync();
+
+        logger.LogInformation("Autocomplete indexes ready.");
     }
 
     private static async Task RunOsm2PgsqlAsync(string connectionString, string pbfPath, ILogger logger)
