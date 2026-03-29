@@ -112,10 +112,11 @@
     "close": "Close",
     "license_section": "License",
     "license_body": "This application is provided under the Apache License 2.0. It is distributed on an \"AS IS\" basis, without warranties or conditions of any kind, either express or implied. See the Apache License 2.0 for the specific language governing permissions and limitations.",
+    "license_github": "Source code is publicly available on GitHub:",
     "cloudflare_section": "Infrastructure & Data Transfer",
     "cloudflare_body": "This website is protected by Cloudflare\u2019s DNS proxy service. As a result, website metadata (such as IP addresses and request headers) may be routed through servers located in the United States as part of Cloudflare\u2019s global network infrastructure. This is a standard security and performance measure. For details, please refer to Cloudflare\u2019s Privacy Policy at cloudflare.com.",
-    "tracking_section": "No Tracking or Cookies",
-    "tracking_body": "This application does not use any tracking technologies, analytics services, or cookies. No personal data is collected, stored, or processed beyond what is technically necessary to serve the application.",
+    "tracking_section": "Tracking & Cookies",
+    "tracking_body": "This application does not use any analytics services or tracking technologies of its own. No personal data is collected or stored by the application itself. However, this site is served via Cloudflare, which acts as a reverse proxy and may set technical cookies (e.g. __cf_bm) and process connection data such as IP addresses for the purpose of DDoS protection, security filtering, and performance optimisation. This processing is carried out by Cloudflare Inc. under their own privacy policy.",
     "data_section": "Route Data",
     "data_body": "Route queries submitted through this application (including your location and destination) are used solely to calculate and return your walking route in real time. No route data is stored, logged, or retained on our servers after the response is delivered."
   }

@@ -112,10 +112,11 @@
     "close": "Schlie\u00dfen",
     "license_section": "Lizenz",
     "license_body": "Diese Anwendung wird unter der Apache License 2.0 bereitgestellt. Sie wird ohne jegliche Gew\u00e4hrleistung oder Bedingungen bereitgestellt, weder ausdr\u00fccklich noch stillschweigend. Weitere Informationen entnehmen Sie bitte der Apache License 2.0.",
+    "license_github": "Der Quellcode ist \u00f6ffentlich auf GitHub verf\u00fcgbar:",
     "cloudflare_section": "Infrastruktur & Daten\u00fcbermittlung",
     "cloudflare_body": "Diese Website wird durch den DNS-Proxy-Dienst von Cloudflare gesch\u00fctzt. Dadurch k\u00f6nnen Website-Metadaten (wie IP-Adressen und Anfrage-Header) im Rahmen der globalen Netzwerkinfrastruktur von Cloudflare \u00fcber Server in den Vereinigten Staaten geleitet werden. Dies ist eine Standard-Sicherheits- und Leistungsma\u00dfnahme. Details entnehmen Sie bitte der Datenschutzerkl\u00e4rung von Cloudflare unter cloudflare.com.",
-    "tracking_section": "Kein Tracking, keine Cookies",
-    "tracking_body": "Diese Anwendung verwendet keinerlei Tracking-Technologien, Analysedienste oder Cookies. Es werden keine personenbezogenen Daten erhoben, gespeichert oder verarbeitet, \u00fcber das technisch notwendige Ma\u00df zur Auslieferung der Anwendung hinaus.",
+    "tracking_section": "Tracking & Cookies",
+    "tracking_body": "Diese Anwendung verwendet keine eigenen Analyse- oder Tracking-Dienste. Es werden durch die Anwendung selbst keine personenbezogenen Daten erhoben oder gespeichert. Diese Website wird jedoch \u00fcber Cloudflare als Reverse-Proxy betrieben. Cloudflare kann dabei technische Cookies setzen (z.\u00a0B. __cf_bm) sowie Verbindungsdaten wie IP-Adressen zum Zweck des DDoS-Schutzes, der Sicherheitsfilterung und der Leistungsoptimierung verarbeiten. Diese Verarbeitung erfolgt durch Cloudflare Inc. gem\u00e4\u00df deren eigener Datenschutzerkl\u00e4rung.",
     "data_section": "Routendaten",
     "data_body": "Routenanfragen, die \u00fcber diese Anwendung \u00fcbermittelt werden (einschlie\u00dflich Standort und Ziel), werden ausschlie\u00dflich zur Berechnung und Ausgabe der Gehroute in Echtzeit verwendet. Es werden keine Routendaten nach der Antwort auf unseren Servern gespeichert, protokolliert oder aufbewahrt."
   }

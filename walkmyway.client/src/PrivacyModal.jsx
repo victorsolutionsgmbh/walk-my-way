@@ -22,6 +22,12 @@ export default function PrivacyModal({ onClose }) {
                     <section className="wmw-modal-section">
                         <h3>{t('privacy.license_section')}</h3>
                         <p>{t('privacy.license_body')}</p>
+                        <p>
+                            {t('privacy.license_github')}{' '}
+                            <a href="https://github.com/victorsolutionsgmbh/walk-my-way" target="_blank" rel="noopener noreferrer">
+                                github.com/victorsolutionsgmbh/walk-my-way
+                            </a>
+                        </p>
                     </section>
 
                     <section className="wmw-modal-section">
