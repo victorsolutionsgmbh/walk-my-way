@@ -67,10 +67,6 @@ public class PostgresOsmProvider : IMapProvider
         if (_geocodeCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        // Single round-trip: address point → address polygon → nearest street (by priority).
-        // Uses native EPSG:3857 KNN (<->) so PostGIS can use the GIST index on `way` directly.
-        // The ST_Expand bounding-box pre-filter (~150 m at Vienna lat) limits the index scan
-        // to a tiny neighbourhood before the exact KNN sort.
         const string sql = """
             WITH pt AS (
                 SELECT ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857) AS geom
@@ -107,7 +103,7 @@ public class PostgresOsmProvider : IMapProvider
                     LIMIT  1
                 )
                 UNION ALL
-                -- 3. Nearest named street (fallback — no radius limit, pure KNN)
+                -- 3. nearest named street (fallback; uses idx_osm_line_way_highway_named)
                 (
                     SELECT 3,
                            name,
@@ -117,6 +113,7 @@ public class PostgresOsmProvider : IMapProvider
                     FROM   planet_osm_line, pt
                     WHERE  name    IS NOT NULL
                       AND  highway IS NOT NULL
+                      AND  way && ST_Expand(pt.geom, 500)
                     ORDER BY way <-> pt.geom
                     LIMIT  1
                 )
@@ -191,9 +188,10 @@ public class PostgresOsmProvider : IMapProvider
     private async Task<List<PlaceCandidate>> SearchPointsNearbyAsync(
         double lat, double lng, int radiusMeters, string column, string[] values, bool openNow)
     {
-        // Fetch more rows than needed so we still have enough after open-now filtering.
-        // LATERAL join finds the nearest street name for POIs that have no addr:street tag.
         var sql = $"""
+            WITH pt AS (
+                SELECT ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857) AS geom
+            )
             SELECT p.osm_id::text,
                    p.name,
                    p.tags->'addr:street'      AS street,
@@ -207,16 +205,15 @@ public class PostgresOsmProvider : IMapProvider
             LEFT JOIN LATERAL (
                 SELECT name FROM planet_osm_line
                 WHERE  highway IS NOT NULL AND name IS NOT NULL
+                  AND  way && ST_Expand(p.way, 5000)
                 ORDER BY way <-> p.way
                 LIMIT  1
             ) nearest ON (p.tags->'addr:street') IS NULL
             WHERE  p.{column} = ANY(@values)
               AND  p.name IS NOT NULL
-              AND  ST_DWithin(
-                     ST_Transform(p.way, 4326)::geography,
-                     ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
-                     @radius)
-            ORDER BY p.way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
+              AND  p.way && ST_Expand((SELECT geom FROM pt), @radius * 2)
+              AND  ST_DWithin(p.way, (SELECT geom FROM pt), @radius)
+            ORDER BY p.way <-> (SELECT geom FROM pt)
             LIMIT  {(openNow ? 40 : 10)}
             """;
 
@@ -233,35 +230,43 @@ public class PostgresOsmProvider : IMapProvider
         double lat, double lng, int radiusMeters, string column, string[] values, bool openNow)
     {
         var sql = $"""
+            WITH pt AS (
+                SELECT ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857) AS geom
+            )
             SELECT p.osm_id::text,
                    p.name,
-                   p.tags->'addr:street'      AS street,
-                   p."addr:housenumber"       AS housenumber,
-                   p.tags->'addr:city'        AS city,
-                   ST_X(ST_Centroid(ST_Transform(p.way, 4326))) AS lng,
-                   ST_Y(ST_Centroid(ST_Transform(p.way, 4326))) AS lat,
-                   ST_YMax(ST_Transform(ST_Envelope(p.way), 4326)) AS ne_lat,
-                   ST_XMax(ST_Transform(ST_Envelope(p.way), 4326)) AS ne_lng,
-                   ST_YMin(ST_Transform(ST_Envelope(p.way), 4326)) AS sw_lat,
-                   ST_XMin(ST_Transform(ST_Envelope(p.way), 4326)) AS sw_lng,
-                   p.tags->'opening_hours'   AS opening_hours,
-                   nearest.name              AS fallback_street,
-                   ST_Area(ST_Transform(p.way, 4326)::geography) AS area_m2
-            FROM   planet_osm_polygon p
+                   p.tags->'addr:street'        AS street,
+                   p."addr:housenumber"         AS housenumber,
+                   p.tags->'addr:city'          AS city,
+                   ST_X(ST_Transform(p.centroid, 4326)) AS lng,
+                   ST_Y(ST_Transform(p.centroid, 4326)) AS lat,
+                   ST_YMax(p.way_env)           AS ne_lat,
+                   ST_XMax(p.way_env)           AS ne_lng,
+                   ST_YMin(p.way_env)           AS sw_lat,
+                   ST_XMin(p.way_env)           AS sw_lng,
+                   p.tags->'opening_hours'      AS opening_hours,
+                   nearest.name                 AS fallback_street,
+                   ST_Area(p.way)               AS area_m2
+            FROM (
+                -- centroid and envelope pre-computed once per polygon
+                SELECT p.*,
+                       ST_Centroid(p.way)                     AS centroid,
+                       ST_Transform(ST_Envelope(p.way), 4326) AS way_env
+                FROM   planet_osm_polygon p, pt
+                WHERE  p.{column} = ANY(@values)
+                  AND  p.name IS NOT NULL
+                  AND  p.way && ST_Expand(pt.geom, @radius * 2)
+                  AND  ST_DWithin(p.way, pt.geom, @radius)
+                ORDER BY p.way <-> pt.geom
+                LIMIT  {(openNow ? 40 : 10)}
+            ) p
             LEFT JOIN LATERAL (
                 SELECT name FROM planet_osm_line
                 WHERE  highway IS NOT NULL AND name IS NOT NULL
-                ORDER BY way <-> ST_Centroid(p.way)
+                  AND  way && ST_Expand(p.centroid, 5000)
+                ORDER BY way <-> p.centroid
                 LIMIT  1
             ) nearest ON (p.tags->'addr:street') IS NULL
-            WHERE  p.{column} = ANY(@values)
-              AND  p.name IS NOT NULL
-              AND  ST_DWithin(
-                     ST_Transform(p.way, 4326)::geography,
-                     ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
-                     @radius)
-            ORDER BY p.way <-> ST_Transform(ST_SetSRID(ST_MakePoint(@lng, @lat), 4326), 3857)
-            LIMIT  {(openNow ? 40 : 10)}
             """;
 
         await using var cmd = _db.CreateCommand(sql);
@@ -338,9 +343,13 @@ public class PostgresOsmProvider : IMapProvider
     // ── Autocomplete ───────────────────────────────────────────────────────────
 
     // Requires: CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    // Location (lat/lng) is mandatory — throws ArgumentException when missing.
     public async Task<List<PlaceSuggestion>> GetPlaceAutocompleteSuggestionsAsync(
         string input, double? lat, double? lng)
     {
+        if (!lat.HasValue || !lng.HasValue)
+            throw new ArgumentException("lat and lng are required for autocomplete.");
+
         var q          = input.Trim();
         var pattern    = $"%{q}%";
         var startsWith = $"{q}%";
@@ -350,20 +359,24 @@ public class PostgresOsmProvider : IMapProvider
         if (_autocompleteCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        // Planar degree-distance squared — no geography cast, no function call,
-        // perfectly sufficient for ordering within city bounds (~50 km radius).
-        var proximitySelect = (lat.HasValue && lng.HasValue)
-            ? "(sub.lng - @nearLng) * (sub.lng - @nearLng) + (sub.lat - @nearLat) * (sub.lat - @nearLat)"
-            : "0::float8";
+        // When the input contains a digit, attempt to split into street + housenumber.
+        // "Hauptstraße 12a" → streetPart="Hauptstraße", housePart="12a"
+        // houseRegex uses a word-boundary so "12" does not match "120", "121", etc.
+        bool   hasAddressSplit = false;
+        string streetPart = q, housePart = "", houseRegex = "";
+        if (hasDigit)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(q, @"^(.*?)\s+(\d+\S*)$");
+            if (m.Success)
+            {
+                streetPart      = m.Groups[1].Value;
+                housePart       = m.Groups[2].Value;
+                houseRegex      = $"^{System.Text.RegularExpressions.Regex.Escape(housePart)}([^0-9]|$)";
+                hasAddressSplit = true;
+            }
+        }
 
-        // Bounding-box radius filter using the pre-computed near_pt CTE.
-        // 20 000 EPSG:3857 units ≈ 13 km geographic at ~48° N — enough for city autocomplete.
-        var radiusFilter = (lat.HasValue && lng.HasValue)
-            ? "AND way && ST_Expand((SELECT geom FROM near_pt), 20000)"
-            : "";
-
-        // Inline SQL expression that formats a full address (street + housenumber + city)
-        // from the OSM tags columns. Used in POI and area branches.
+        // Inline SQL: full POI address string from OSM tags.
         const string addrExpr = """
             CASE
                 WHEN (tags->'addr:street') IS NOT NULL THEN
@@ -374,85 +387,191 @@ public class PostgresOsmProvider : IMapProvider
             END
             """;
 
-        // Address nodes are included only when the input contains a digit (e.g. "Hauptstr 5").
-        // Both point nodes and building polygons are checked, because Vienna OSM data stores
-        // most building addresses on polygons, not standalone point nodes.
-        // For address branches the name IS already "street housenumber", so address = just city.
-        var addressUnion = hasDigit ? $"""
+        // Inline SQL: PLZ + city string used for address and street enrichment.
+        const string plzCityExpr = """
+            CASE
+                WHEN (tags->'addr:postcode') IS NOT NULL AND (tags->'addr:city') IS NOT NULL
+                    THEN (tags->'addr:postcode') || ' ' || (tags->'addr:city')
+                WHEN (tags->'addr:postcode') IS NOT NULL THEN tags->'addr:postcode'
+                ELSE tags->'addr:city'
+            END
+            """;
+
+        // Address branches: only when we can split the input into street + housenumber.
+        // type_rank = 0 → address results always rank above streets (1) and POIs (3).
+        // mrank 0 = exact housenumber, 1 = prefix with non-digit boundary (e.g. "1a"), 2 = rest.
+        //
+        // Fuzzy street resolution strategy:
+        // Instead of running % (trigram similarity) directly on the hstore expression
+        // tags->'addr:street' (no usable index without a restart), we resolve the canonical
+        // street name(s) first via planet_osm_line.name — which already has idx_osm_line_name_trgm.
+        // The address branches then do an exact IN-lookup against those resolved names.
+        var fuzzyStreetsCte = hasAddressSplit ? $"""
+            ,
+            fuzzy_streets AS (
+                SELECT name
+                FROM (
+                    SELECT DISTINCT name, similarity(name, @streetPart) AS sim
+                    FROM   planet_osm_line, near_pt
+                    WHERE  (name ILIKE @streetPattern OR name % @streetPart)
+                      AND  highway IS NOT NULL
+                      AND  way && ST_Expand(near_pt.geom, 20000)
+                ) _s
+                WHERE  sim > 0.45
+                ORDER BY sim DESC
+                LIMIT  5
+            )
+            """ : "";
+
+        // Street-only address branches: shown when the query has NO housenumber.
+        // type_rank = 2 → after the street itself (type_rank = 1) but before POIs (type_rank = 3).
+        // num_sort extracts the leading integer from the housenumber for natural numeric ordering.
+        var streetOnlyAddressUnion = !hasAddressSplit ? $"""
 
                 UNION ALL
 
-                -- Address nodes on points (street + housenumber)
+                -- Address points for street-name-only search (numeric housenumber order)
                 (
-                    SELECT (tags->'addr:street') || ' ' || ("addr:housenumber") AS name,
-                           tags->'addr:city' AS city,
-                           ST_X(ST_Transform(way, 4326)) AS lng,
-                           ST_Y(ST_Transform(way, 4326)) AS lat,
-                           CASE WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @startsWith THEN 0
-                                WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @pattern    THEN 1
-                                ELSE 2 END AS mrank,
-                           0 AS src,
-                           tags->'addr:city' AS address
-                    FROM   planet_osm_point
-                    WHERE  (tags->'addr:street') IS NOT NULL
-                      AND  ("addr:housenumber") IS NOT NULL
-                      AND  ((tags->'addr:street') || ' ' || ("addr:housenumber")) ILIKE @pattern
-                      {radiusFilter}
+                    SELECT
+                        (tags->'addr:street') || ' ' || "addr:housenumber"               AS name,
+                        'address'::text                                                    AS result_type,
+                        {plzCityExpr}                                                      AS display_address,
+                        ST_X(ST_Transform(way, 4326))                                     AS lng,
+                        ST_Y(ST_Transform(way, 4326))                                     AS lat,
+                        2                                                                  AS type_rank,
+                        0                                                                  AS mrank,
+                        (regexp_match("addr:housenumber", '^([0-9]+)'))[1]::int           AS num_sort
+                    FROM   planet_osm_point, near_pt
+                    WHERE  (tags->'addr:street') ILIKE @q
+                      AND  "addr:housenumber" IS NOT NULL
+                      AND  way && ST_Expand(near_pt.geom, 20000)
+                    LIMIT  50
+                )
+
+                UNION ALL
+
+                -- Address polygons (buildings) for street-name-only search
+                (
+                    SELECT
+                        (tags->'addr:street') || ' ' || "addr:housenumber"               AS name,
+                        'address'::text                                                    AS result_type,
+                        {plzCityExpr}                                                      AS display_address,
+                        ST_X(ST_Centroid(ST_Transform(way, 4326)))                        AS lng,
+                        ST_Y(ST_Centroid(ST_Transform(way, 4326)))                        AS lat,
+                        2                                                                  AS type_rank,
+                        0                                                                  AS mrank,
+                        (regexp_match("addr:housenumber", '^([0-9]+)'))[1]::int           AS num_sort
+                    FROM   planet_osm_polygon, near_pt
+                    WHERE  (tags->'addr:street') ILIKE @q
+                      AND  "addr:housenumber" IS NOT NULL
+                      AND  way && ST_Expand(near_pt.geom, 20000)
+                    LIMIT  50
+                )
+                """ : "";
+
+        var addressUnion = hasAddressSplit ? $"""
+
+                UNION ALL
+
+                -- Address polygons (buildings — primary source in AT/Vienna OSM data)
+                (
+                    SELECT
+                        (tags->'addr:street') || ' ' || "addr:housenumber"  AS name,
+                        'address'::text                                      AS result_type,
+                        {plzCityExpr}                                        AS display_address,
+                        ST_X(ST_Centroid(ST_Transform(way, 4326)))           AS lng,
+                        ST_Y(ST_Centroid(ST_Transform(way, 4326)))           AS lat,
+                        0 AS type_rank,
+                        CASE
+                            WHEN (tags->'addr:street') ILIKE @streetExact
+                                 AND "addr:housenumber" = @housePart                           THEN 0
+                            WHEN (tags->'addr:street') ILIKE @streetPrefix
+                                 AND "addr:housenumber" ~* ('^' || @housePart || '[^0-9]')    THEN 1
+                            ELSE 2
+                        END AS mrank,
+                        (regexp_match("addr:housenumber", '^([0-9]+)'))[1]::int AS num_sort
+                    FROM   planet_osm_polygon, near_pt
+                    WHERE  (tags->'addr:street') IN (SELECT name FROM fuzzy_streets)
+                      AND  "addr:housenumber" ~* @houseRegex
+                      AND  way && ST_Expand(near_pt.geom, 20000)
+                    ORDER BY mrank, way <-> near_pt.geom
                     LIMIT  20
                 )
 
                 UNION ALL
 
-                -- Address tags on building polygons (street + housenumber)
+                -- Address points
                 (
-                    SELECT (tags->'addr:street') || ' ' || ("addr:housenumber") AS name,
-                           tags->'addr:city' AS city,
-                           ST_X(ST_Centroid(ST_Transform(way, 4326))) AS lng,
-                           ST_Y(ST_Centroid(ST_Transform(way, 4326))) AS lat,
-                           CASE WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @startsWith THEN 0
-                                WHEN (tags->'addr:street') || ' ' || ("addr:housenumber") ILIKE @pattern    THEN 1
-                                ELSE 2 END AS mrank,
-                           0 AS src,
-                           tags->'addr:city' AS address
-                    FROM   planet_osm_polygon
-                    WHERE  (tags->'addr:street') IS NOT NULL
-                      AND  ("addr:housenumber") IS NOT NULL
-                      AND  ((tags->'addr:street') || ' ' || ("addr:housenumber")) ILIKE @pattern
-                      {radiusFilter}
+                    SELECT
+                        (tags->'addr:street') || ' ' || "addr:housenumber"  AS name,
+                        'address'::text                                      AS result_type,
+                        {plzCityExpr}                                        AS display_address,
+                        ST_X(ST_Transform(way, 4326))                        AS lng,
+                        ST_Y(ST_Transform(way, 4326))                        AS lat,
+                        0 AS type_rank,
+                        CASE
+                            WHEN (tags->'addr:street') ILIKE @streetExact
+                                 AND "addr:housenumber" = @housePart                           THEN 0
+                            WHEN (tags->'addr:street') ILIKE @streetPrefix
+                                 AND "addr:housenumber" ~* ('^' || @housePart || '[^0-9]')    THEN 1
+                            ELSE 2
+                        END AS mrank,
+                        (regexp_match("addr:housenumber", '^([0-9]+)'))[1]::int AS num_sort
+                    FROM   planet_osm_point, near_pt
+                    WHERE  (tags->'addr:street') IN (SELECT name FROM fuzzy_streets)
+                      AND  "addr:housenumber" ~* @houseRegex
+                      AND  way && ST_Expand(near_pt.geom, 20000)
+                    ORDER BY mrank, way <-> near_pt.geom
                     LIMIT  20
                 )
                 """ : "";
 
-        // mrank: 0 = prefix match, 1 = substring match, 2 = trigram-only (typo) match.
-        // near_pt CTE pre-computes the EPSG:3857 user point once — referenced in every
-        // ORDER BY and radiusFilter instead of repeating ST_Transform(ST_SetSRID(...)).
-        // DISTINCT ON ORDER BY uses the `prox` alias to avoid recomputing proximitySelect.
-        // Column order: name(0), city(1), lng(2), lat(3), address(4)
+        // Column order in result: name(0), result_type(1), display_address(2), lng(3), lat(4)
         var sql = $"""
             WITH near_pt AS (
                 SELECT ST_Transform(ST_SetSRID(ST_MakePoint(@nearLng, @nearLat), 4326), 3857) AS geom
-            )
-            SELECT name, city, lng, lat, address
+            ){fuzzyStreetsCte}
+            SELECT
+                r.name,
+                r.result_type,
+                CASE
+                    WHEN r.result_type = 'street'
+                        THEN street_loc.plz_city
+                    WHEN r.result_type = 'poi' AND r.display_address IS NULL
+                        THEN poi_fallback.nearest_street
+                    ELSE r.display_address
+                END AS display_address,
+                r.lng,
+                r.lat
             FROM (
                 SELECT DISTINCT ON (lower(sub.name))
-                       sub.name, sub.city, sub.lng, sub.lat, sub.mrank, sub.src, sub.address,
-                       {proximitySelect} AS prox
+                       sub.name,
+                       sub.result_type,
+                       sub.display_address,
+                       sub.lng,
+                       sub.lat,
+                       sub.type_rank,
+                       sub.mrank,
+                       sub.num_sort,
+                       (sub.lng - @nearLng) * (sub.lng - @nearLng)
+                         + (sub.lat - @nearLat) * (sub.lat - @nearLat) AS prox
                 FROM (
-                    -- Named POIs / places (point nodes), capped early
+                    -- Named POIs: point nodes
                     (
                         SELECT name,
-                               tags->'addr:city' AS city,
+                               'poi'::text AS result_type,
+                               {addrExpr}  AS display_address,
                                ST_X(ST_Transform(way, 4326)) AS lng,
                                ST_Y(ST_Transform(way, 4326)) AS lat,
+                               3 AS type_rank,
                                CASE WHEN name ILIKE @startsWith THEN 0
                                     WHEN name ILIKE @pattern    THEN 1
                                     ELSE                             2 END AS mrank,
-                               0 AS src,
-                               {addrExpr} AS address
+                               NULL::int AS num_sort
                         FROM   planet_osm_point, near_pt
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  name IS NOT NULL
-                          {radiusFilter}
+                          AND  way && ST_Expand(near_pt.geom, 20000)
                         ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                       WHEN name ILIKE @pattern    THEN 1
                                       ELSE                             2 END,
@@ -462,57 +581,87 @@ public class PostgresOsmProvider : IMapProvider
 
                     UNION ALL
 
-                    -- Named streets / roads — one representative row per distinct name
+                    -- Named streets / roads — one representative row per distinct name.
+                    -- DISTINCT ON (name) ORDER BY name, distance picks the nearest segment per street.
+                    -- The outer ORDER BY mrank, proximity then applies LIMIT so exact matches
+                    -- (mrank 0/1) are never pushed out by alphabetically-earlier fuzzy matches.
                     (
-                        SELECT name, city, lng, lat, mrank, src, address
+                        SELECT name, result_type, display_address, lng, lat, type_rank, mrank, num_sort
                         FROM (
                             SELECT DISTINCT ON (name) name,
-                                   NULL AS city,
+                                   'street'::text  AS result_type,
+                                   NULL::text      AS display_address,
                                    ST_X(ST_Transform(ST_Centroid(way), 4326)) AS lng,
                                    ST_Y(ST_Transform(ST_Centroid(way), 4326)) AS lat,
+                                   1               AS type_rank,
                                    CASE WHEN name ILIKE @startsWith THEN 0
                                         WHEN name ILIKE @pattern    THEN 1
                                         ELSE                             2 END AS mrank,
-                                   1 AS src,
-                                   NULL::text AS address
+                                   NULL::int AS num_sort
                             FROM   planet_osm_line, near_pt
                             WHERE  (name ILIKE @pattern OR name % @q)
                               AND  highway IS NOT NULL
-                              {radiusFilter}
-                            ORDER BY name,
-                                     way <-> near_pt.geom
-                            LIMIT  20
+                              AND  way && ST_Expand(near_pt.geom, 20000)
+                            ORDER BY name, way <-> near_pt.geom
                         ) _streets
+                        ORDER BY mrank,
+                                 (lng - @nearLng) * (lng - @nearLng) + (lat - @nearLat) * (lat - @nearLat)
+                        LIMIT 20
                     )
 
                     UNION ALL
 
-                    -- Named areas (parks, districts, etc.), capped early
+                    -- Named areas (parks, districts, etc.)
                     (
                         SELECT name,
-                               tags->'addr:city' AS city,
+                               'poi'::text AS result_type,
+                               {addrExpr}  AS display_address,
                                ST_X(ST_Centroid(ST_Transform(way, 4326))) AS lng,
                                ST_Y(ST_Centroid(ST_Transform(way, 4326))) AS lat,
+                               3 AS type_rank,
                                CASE WHEN name ILIKE @startsWith THEN 0
                                     WHEN name ILIKE @pattern    THEN 1
                                     ELSE                             2 END AS mrank,
-                               0 AS src,
-                               {addrExpr} AS address
+                               NULL::int AS num_sort
                         FROM   planet_osm_polygon, near_pt
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  (place IS NOT NULL OR leisure IS NOT NULL
                                 OR landuse IS NOT NULL OR amenity IS NOT NULL)
-                          {radiusFilter}
+                          AND  way && ST_Expand(near_pt.geom, 20000)
                         ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                       WHEN name ILIKE @pattern    THEN 1
                                       ELSE                             2 END,
                                  way <-> near_pt.geom
                         LIMIT  20
-                    ){addressUnion}
+                    ){addressUnion}{streetOnlyAddressUnion}
                 ) sub
-                ORDER BY lower(sub.name), sub.mrank, sub.src, prox
-            ) deduped
-            ORDER BY mrank, src, prox
+                ORDER BY lower(sub.name), sub.type_rank, sub.mrank, sub.num_sort NULLS LAST, prox
+            ) r
+
+            -- PLZ + city for streets via nearest address point
+            -- ST_Expand pre-filter keeps the KNN scan within ~5 km before the exact sort.
+            LEFT JOIN LATERAL (
+                SELECT {plzCityExpr} AS plz_city
+                FROM   planet_osm_point
+                WHERE  ((tags->'addr:postcode') IS NOT NULL OR (tags->'addr:city') IS NOT NULL)
+                  AND  way && ST_Expand(
+                           ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857), 5000)
+                ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857)
+                LIMIT  1
+            ) street_loc ON (r.result_type = 'street')
+
+            -- Nearest street name for POIs that have no address
+            LEFT JOIN LATERAL (
+                SELECT l.name AS nearest_street
+                FROM   planet_osm_line l
+                WHERE  l.highway IS NOT NULL AND l.name IS NOT NULL
+                  AND  l.way && ST_Expand(
+                           ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857), 5000)
+                ORDER BY l.way <-> ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857)
+                LIMIT  1
+            ) poi_fallback ON (r.result_type = 'poi' AND r.display_address IS NULL)
+
+            ORDER BY r.type_rank, r.mrank, r.num_sort NULLS LAST, r.prox
             LIMIT 5
             """;
 
@@ -520,26 +669,36 @@ public class PostgresOsmProvider : IMapProvider
         cmd.Parameters.AddWithValue("pattern",    pattern);
         cmd.Parameters.AddWithValue("startsWith", startsWith);
         cmd.Parameters.AddWithValue("q",          q);
-        // @nearLng/@nearLat serve as both the KNN anchor and the proximity/radius reference.
-        // Falls back to Vienna centre when the caller has no location.
-        cmd.Parameters.AddWithValue("nearLng", lng ?? 16.37);
-        cmd.Parameters.AddWithValue("nearLat", lat ?? 48.21);
+        cmd.Parameters.AddWithValue("nearLng",    lng.Value);
+        cmd.Parameters.AddWithValue("nearLat",    lat.Value);
+
+        if (hasAddressSplit)
+        {
+            cmd.Parameters.AddWithValue("streetPart",    streetPart);
+            cmd.Parameters.AddWithValue("streetPattern", $"%{streetPart}%");
+            cmd.Parameters.AddWithValue("streetExact",   streetPart);
+            cmd.Parameters.AddWithValue("streetPrefix",  $"{streetPart}%");
+            cmd.Parameters.AddWithValue("housePart",     housePart);
+            cmd.Parameters.AddWithValue("houseRegex",    houseRegex);
+        }
 
         var results = new List<PlaceSuggestion>();
         await using var reader = await cmd.ExecuteReaderAsync();
 
         while (await reader.ReadAsync())
         {
-            var name    = reader.GetString(0);
-            var pLng    = reader.GetDouble(2);
-            var pLat    = reader.GetDouble(3);
-            var address = reader.IsDBNull(4) ? null : reader.GetString(4);
+            var name       = reader.GetString(0);
+            var resultType = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var address    = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var pLng       = reader.GetDouble(3);
+            var pLat       = reader.GetDouble(4);
 
             results.Add(new PlaceSuggestion
             {
                 Description = name,
                 Address     = string.IsNullOrWhiteSpace(address) ? null : address,
-                PlaceId     = $"{pLat.ToString(CultureInfo.InvariantCulture)},{pLng.ToString(CultureInfo.InvariantCulture)}"
+                PlaceId     = $"{pLat.ToString(CultureInfo.InvariantCulture)},{pLng.ToString(CultureInfo.InvariantCulture)}",
+                ResultType  = resultType
             });
         }
 

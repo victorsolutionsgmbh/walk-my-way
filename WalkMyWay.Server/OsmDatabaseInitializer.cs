@@ -53,7 +53,6 @@ public static class OsmDatabaseInitializer
         var targetDatabase = builder.Database
             ?? throw new InvalidOperationException("No database name found in connection string.");
 
-        // Connect to the postgres maintenance DB to check/create the target database
         builder.Database = "postgres";
         var maintenanceConnString = builder.ToString();
 
@@ -183,11 +182,10 @@ public static class OsmDatabaseInitializer
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync();
 
-        // Trigram GIN indexes on `name` — enable fast ILIKE '%q%' and similarity `%` operator
-        // used by autocomplete. osm2pgsql does not create these automatically.
         await using var cmd = conn.CreateCommand();
         cmd.CommandTimeout = 600; // index creation on large tables can take several minutes
         cmd.CommandText = """
+            -- trigram gin on name: ilike '%q%' and similarity operator in autocomplete
             CREATE INDEX IF NOT EXISTS idx_osm_point_name_trgm
                 ON planet_osm_point USING GIN (name gin_trgm_ops)
                 WHERE name IS NOT NULL;
@@ -199,6 +197,29 @@ public static class OsmDatabaseInitializer
             CREATE INDEX IF NOT EXISTS idx_osm_polygon_name_trgm
                 ON planet_osm_polygon USING GIN (name gin_trgm_ops)
                 WHERE name IS NOT NULL;
+
+            -- trigram gin on addr:street: ilike matches in address autocomplete branches
+            CREATE INDEX IF NOT EXISTS idx_osm_point_addr_street_trgm
+                ON planet_osm_point USING GIN ((tags->'addr:street') gin_trgm_ops)
+                WHERE (tags->'addr:street') IS NOT NULL AND "addr:housenumber" IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_osm_polygon_addr_street_trgm
+                ON planet_osm_polygon USING GIN ((tags->'addr:street') gin_trgm_ops)
+                WHERE (tags->'addr:street') IS NOT NULL AND "addr:housenumber" IS NOT NULL;
+
+            -- b-tree on addr:street: equality / in-list lookups in fuzzy address resolution
+            CREATE INDEX IF NOT EXISTS idx_osm_point_addr_street_btree
+                ON planet_osm_point ((tags->'addr:street'))
+                WHERE (tags->'addr:street') IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_osm_polygon_addr_street_btree
+                ON planet_osm_polygon ((tags->'addr:street'))
+                WHERE (tags->'addr:street') IS NOT NULL;
+
+            -- partial gist on named highways: knn fallback in reverse geocode + lateral joins
+            CREATE INDEX IF NOT EXISTS idx_osm_line_way_highway_named
+                ON planet_osm_line USING GIST (way)
+                WHERE highway IS NOT NULL AND name IS NOT NULL;
             """;
         await cmd.ExecuteNonQueryAsync();
 
