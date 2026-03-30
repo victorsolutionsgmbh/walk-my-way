@@ -10,9 +10,31 @@ env:
   IMAGE_NAME: walk-my-way-server
 
 jobs:
+  build:
+    name: Build solution
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore WalkMyWay.Server/WalkMyWay.Server.csproj
+
+      - name: Build
+        run: dotnet build WalkMyWay.Server/WalkMyWay.Server.csproj --no-restore --configuration Release
+
   build-and-push:
+    name: Build and push Docker image
     runs-on: ubuntu-latest
     environment: PROD
+    if: github.event_name == 'push'
 
     steps:
       - name: Checkout
@@ -59,7 +81,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |

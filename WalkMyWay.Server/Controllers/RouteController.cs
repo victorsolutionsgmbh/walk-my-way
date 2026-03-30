@@ -31,6 +31,9 @@ public class RouteController : ControllerBase
         if (string.IsNullOrWhiteSpace(input) || input.Length < 2)
             return Ok(new { suggestions = Array.Empty<object>() });
 
+        if (!lat.HasValue || !lng.HasValue)
+            return BadRequest(new { error = "lat and lng are required for autocomplete." });
+
         try
         {
             var suggestions = await _mapProvider.GetPlaceAutocompleteSuggestionsAsync(input, lat, lng);
@@ -39,7 +42,7 @@ public class RouteController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Autocomplete failed for input '{Input}'", input);
-            return Ok(new { suggestions = Array.Empty<object>() });
+            return StatusCode(500, new { error = "Autocomplete failed." });
         }
     }
 
