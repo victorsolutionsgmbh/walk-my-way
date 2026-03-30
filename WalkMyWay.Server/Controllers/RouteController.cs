@@ -86,6 +86,7 @@ public class RouteController : ControllerBase
         try
         {
             var result = await _routeService.GetWalkingRouteAsync(request);
+            await Task.Delay(1640);
             return Ok(result);
         }
         catch (InvalidOperationException ex)
