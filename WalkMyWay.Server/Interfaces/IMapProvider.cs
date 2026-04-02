@@ -21,6 +21,7 @@ public class PlaceSuggestion
     public string? Address     { get; set; }
     public string  PlaceId     { get; set; } = string.Empty;
     public string? ResultType  { get; set; }
+    public double  DistanceKm  { get; set; }
 }
 
 public record PlaceCandidate(

@@ -24,6 +24,19 @@ const TYPES_WITHOUT_OPEN_NOW = new Set(
     PREFERENCE_VALUES.filter(t => t.noOpenNow).map(t => t.value)
 );
 
+const SUGGESTION_BADGE = {
+    poi:     { label: 'Ort',         cls: 'wmw-sbadge-poi'     },
+    street:  { label: 'Straße',      cls: 'wmw-sbadge-street'  },
+    transit: { label: 'Haltestelle', cls: 'wmw-sbadge-transit' },
+    address: { label: 'Adresse',     cls: 'wmw-sbadge-address' },
+};
+
+function SuggestionBadge({ type }) {
+    const b = SUGGESTION_BADGE[type];
+    if (!b) return null;
+    return <span className={`wmw-sbadge ${b.cls}`}>{b.label}</span>;
+}
+
 function LangSwitch() {
     const { lang, setLang } = useTranslation();
     return (
@@ -449,12 +462,18 @@ export default function App() {
                                                 </div>
                                             ) : suggestions.map(s => (
                                                 <div
-                                                    key={s.placeId}
+                                                    key={`${s.placeId}-${s.resultType}`}
                                                     className="wmw-suggestion"
                                                     onMouseDown={e => { e.preventDefault(); selectSuggestion(s); }}
                                                 >
-                                                    <span className="wmw-suggestion-name">{s.description}</span>
+                                                    <div className="wmw-suggestion-row">
+                                                        <span className="wmw-suggestion-name">{s.description}</span>
+                                                        <SuggestionBadge type={s.resultType} />
+                                                    </div>
                                                     {s.address && <span className="wmw-suggestion-addr">{s.address}</span>}
+                                                    {s.distanceKm != null && (
+                                                        <span className="wmw-suggestion-dist">{s.distanceKm < 1 ? `${Math.round(s.distanceKm * 1000)} m` : `${s.distanceKm.toFixed(1)} km`}</span>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>

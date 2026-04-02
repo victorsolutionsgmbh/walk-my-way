@@ -21,11 +21,9 @@ public class PostgresOsmProvider : IMapProvider
     // Key: lat/lng rounded to 4 decimal places (~11 m precision).
     // Bounded to 500 entries; cleared wholesale when full (simple, allocation-free eviction).
     private static readonly ConcurrentDictionary<string, string> _geocodeCache = new();
-    private const int GeoCacheMaxSize = 500;
     private static string GeoCacheKey(double lat, double lng) => $"{lat:F4},{lng:F4}";
 
     private static DateTime _lastRequestTime = DateTime.MinValue;
-    private const int MinRequestIntervalMs = 150;
 
     public PostgresOsmProvider(
         NpgsqlDataSource db,
@@ -121,7 +119,7 @@ public class PostgresOsmProvider : IMapProvider
             result = $"{lat:F6}, {lng:F6}";
         }
 
-        if (_geocodeCache.Count >= GeoCacheMaxSize)
+        if (_geocodeCache.Count >= AppConstants.GeoCacheMaxSize)
             _geocodeCache.Clear();
         _geocodeCache[cacheKey] = result;
 
@@ -180,7 +178,7 @@ public class PostgresOsmProvider : IMapProvider
             LEFT JOIN LATERAL (
                 SELECT name FROM planet_osm_line
                 WHERE  highway IS NOT NULL AND name IS NOT NULL
-                  AND  way && ST_Expand(p.way, 5000)
+                  AND  way && ST_Expand(p.way, {AppConstants.AutocompleteFallbackRadiusM})
                 ORDER BY way <-> p.way
                 LIMIT  1
             ) nearest ON (p.tags->'addr:street') IS NULL
@@ -466,8 +464,8 @@ public class PostgresOsmProvider : IMapProvider
         try
         {
             var elapsed = (DateTime.UtcNow - _lastRequestTime).TotalMilliseconds;
-            if (elapsed < MinRequestIntervalMs)
-                await Task.Delay((int)(MinRequestIntervalMs - elapsed));
+            if (elapsed < AppConstants.GoogleApiMinRequestIntervalMs)
+                await Task.Delay((int)(AppConstants.GoogleApiMinRequestIntervalMs - elapsed));
 
             _apiLogger.LogRequest(url);
             var sw = System.Diagnostics.Stopwatch.StartNew();

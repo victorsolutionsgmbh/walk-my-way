@@ -348,6 +348,34 @@
     font-style: italic;
 }
 
+.wmw-suggestion-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.wmw-suggestion-dist {
+    font-size: 11px;
+    color: #9ca3af;
+    margin-top: 1px;
+}
+
+.wmw-sbadge {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.wmw-sbadge-poi     { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+.wmw-sbadge-street  { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+.wmw-sbadge-transit { background: #faf5ff; color: #7c3aed; border: 1px solid #ddd6fe; }
+.wmw-sbadge-address { background: #fff7ed; color: #ea580c; border: 1px solid #fed7aa; }
+
 /* ---- Preferences ---- */
 .wmw-prefs {
     margin-top: 4px;

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using Npgsql;
 
@@ -10,7 +11,84 @@ public class OsmAutocompleteService : IOsmAutocompleteService
     private readonly NpgsqlDataSource _db;
 
     private static readonly ConcurrentDictionary<string, List<PlaceSuggestion>> _cache = new();
-    private const int CacheMaxSize = 200;
+
+    // Maps user-facing terms (German + English + common aliases) to OSM tag column + values.
+    // Polygon = true → search planet_osm_polygon instead of planet_osm_point.
+    private static readonly Dictionary<string, (string Column, string[] Values, bool Polygon)> CategoryMap =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["bar"]           = ("amenity", ["bar", "pub"],                       false),
+            ["bars"]          = ("amenity", ["bar", "pub"],                       false),
+            ["pub"]           = ("amenity", ["bar", "pub"],                       false),
+            ["pubs"]          = ("amenity", ["bar", "pub"],                       false),
+            ["kneipe"]        = ("amenity", ["bar", "pub"],                       false),
+            ["café"]          = ("amenity", ["cafe"],                             false),
+            ["cafe"]          = ("amenity", ["cafe"],                             false),
+            ["cafés"]         = ("amenity", ["cafe"],                             false),
+            ["cafes"]         = ("amenity", ["cafe"],                             false),
+            ["kaffee"]        = ("amenity", ["cafe"],                             false),
+            ["kaffeehaus"]    = ("amenity", ["cafe"],                             false),
+            ["coffeeshop"]    = ("amenity", ["cafe"],                             false),
+            ["restaurant"]    = ("amenity", ["restaurant", "fast_food"],          false),
+            ["restaurants"]   = ("amenity", ["restaurant", "fast_food"],          false),
+            ["gasthaus"]      = ("amenity", ["restaurant", "fast_food"],          false),
+            ["wirtshaus"]     = ("amenity", ["restaurant", "fast_food"],          false),
+            ["fastfood"]      = ("amenity", ["fast_food"],                        false),
+            ["apotheke"]      = ("amenity", ["pharmacy"],                         false),
+            ["pharmacy"]      = ("amenity", ["pharmacy"],                         false),
+            ["bank"]          = ("amenity", ["bank"],                             false),
+            ["atm"]           = ("amenity", ["atm"],                              false),
+            ["bankomat"]      = ("amenity", ["atm"],                              false),
+            ["geldautomat"]   = ("amenity", ["atm"],                              false),
+            ["bäckerei"]      = ("shop",    ["bakery"],                           false),
+            ["bäcker"]        = ("shop",    ["bakery"],                           false),
+            ["bakery"]        = ("shop",    ["bakery"],                           false),
+            ["supermarkt"]    = ("shop",    ["supermarket"],                      false),
+            ["supermarket"]   = ("shop",    ["supermarket"],                      false),
+            ["lebensmittel"]  = ("shop",    ["supermarket", "convenience"],       false),
+            ["grocery"]       = ("shop",    ["supermarket", "convenience"],       false),
+            ["trafik"]        = ("shop",    ["tobacco"],                          false),
+            ["convenience"]   = ("shop",    ["convenience"],                      false),
+            ["gym"]           = ("leisure", ["fitness_centre", "sports_centre"],  false),
+            ["fitness"]       = ("leisure", ["fitness_centre", "sports_centre"],  false),
+            ["fitnessstudio"] = ("leisure", ["fitness_centre", "sports_centre"],  false),
+            ["sportzentrum"]  = ("leisure", ["fitness_centre", "sports_centre"],  false),
+            ["museum"]        = ("tourism", ["museum"],                           false),
+            ["museen"]        = ("tourism", ["museum"],                           false),
+            ["bibliothek"]    = ("amenity", ["library"],                          false),
+            ["bücherei"]      = ("amenity", ["library"],                          false),
+            ["library"]       = ("amenity", ["library"],                          false),
+            ["park"]          = ("leisure", ["park", "garden"],                   true),
+            ["parks"]         = ("leisure", ["park", "garden"],                   true),
+            ["garten"]        = ("leisure", ["park", "garden"],                   true),
+            ["spielplatz"]    = ("leisure", ["playground"],                       true),
+            ["playground"]    = ("leisure", ["playground"],                       true),
+            ["schule"]        = ("amenity", ["school"],                           false),
+            ["school"]        = ("amenity", ["school"],                           false),
+            ["krankenhaus"]   = ("amenity", ["hospital"],                         false),
+            ["spital"]        = ("amenity", ["hospital"],                         false),
+            ["hospital"]      = ("amenity", ["hospital"],                         false),
+            ["arzt"]          = ("amenity", ["doctors"],                          false),
+            ["doctor"]        = ("amenity", ["doctors"],                          false),
+            ["zahnarzt"]      = ("amenity", ["dentist"],                          false),
+            ["dentist"]       = ("amenity", ["dentist"],                          false),
+            ["tankstelle"]    = ("amenity", ["fuel"],                             false),
+            ["fuel"]          = ("amenity", ["fuel"],                             false),
+            ["hotel"]         = ("tourism", ["hotel", "hostel", "guest_house"],   false),
+            ["hostel"]        = ("tourism", ["hostel"],                           false),
+            ["kirche"]        = ("amenity", ["place_of_worship"],                 false),
+            ["church"]        = ("amenity", ["place_of_worship"],                 false),
+            ["post"]          = ("amenity", ["post_office"],                      false),
+            ["postamt"]       = ("amenity", ["post_office"],                      false),
+            ["polizei"]       = ("amenity", ["police"],                           false),
+            ["police"]        = ("amenity", ["police"],                           false),
+            ["schwimmbad"]    = ("leisure", ["swimming_pool", "sports_centre"],   true),
+            ["hallenbad"]     = ("leisure", ["swimming_pool", "sports_centre"],   true),
+            ["kino"]          = ("amenity", ["cinema"],                           false),
+            ["cinema"]        = ("amenity", ["cinema"],                           false),
+            ["theater"]       = ("amenity", ["theatre"],                          false),
+            ["theatre"]       = ("amenity", ["theatre"],                          false),
+        };
 
     private static string CacheKey(string q, double? lat, double? lng) =>
         $"{q.ToLowerInvariant()}|{(lat.HasValue ? $"{lat:F2}" : "_")}|{(lng.HasValue ? $"{lng:F2}" : "_")}";
@@ -33,6 +111,9 @@ public class OsmAutocompleteService : IOsmAutocompleteService
         var cacheKey = CacheKey(q, lat, lng);
         if (_cache.TryGetValue(cacheKey, out var cached))
             return cached;
+
+        // Detect whether input matches a known POI category (e.g. "bar", "café", "bäcker").
+        var category = DetectCategory(q);
 
         // split "Hauptstraße 12a" → streetPart + housePart
         bool   hasAddressSplit = false;
@@ -78,9 +159,9 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                     FROM   planet_osm_line, near_pt
                     WHERE  (name ILIKE @streetPattern OR name % @streetPart)
                       AND  highway IS NOT NULL
-                      AND  way && ST_Expand(near_pt.geom, 20000)
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                 ) _s
-                WHERE  sim > 0.45
+                WHERE  sim > {AppConstants.FuzzyStreetSimilarityThreshold}
                 ORDER BY sim DESC
                 LIMIT  5
             )
@@ -104,7 +185,7 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                     FROM   planet_osm_point, near_pt
                     WHERE  (tags->'addr:street') ILIKE @q
                       AND  "addr:housenumber" IS NOT NULL
-                      AND  way && ST_Expand(near_pt.geom, 20000)
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                     LIMIT  50
                 )
 
@@ -124,7 +205,7 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                     FROM   planet_osm_polygon, near_pt
                     WHERE  (tags->'addr:street') ILIKE @q
                       AND  "addr:housenumber" IS NOT NULL
-                      AND  way && ST_Expand(near_pt.geom, 20000)
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                     LIMIT  50
                 )
                 """ : "";
@@ -153,7 +234,7 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                     FROM   planet_osm_polygon, near_pt
                     WHERE  (tags->'addr:street') IN (SELECT name FROM fuzzy_streets)
                       AND  "addr:housenumber" ~* @houseRegex
-                      AND  way && ST_Expand(near_pt.geom, 20000)
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                     ORDER BY mrank, way <-> near_pt.geom
                     LIMIT  20
                 )
@@ -180,14 +261,13 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                     FROM   planet_osm_point, near_pt
                     WHERE  (tags->'addr:street') IN (SELECT name FROM fuzzy_streets)
                       AND  "addr:housenumber" ~* @houseRegex
-                      AND  way && ST_Expand(near_pt.geom, 20000)
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                     ORDER BY mrank, way <-> near_pt.geom
                     LIMIT  20
                 )
                 """ : "";
 
-        // transit stops: points (u-bahn entrances, tram stops, bus stops) + station polygons
-        const string transitUnion = """
+        var transitUnion = $"""
 
                 UNION ALL
 
@@ -221,7 +301,7 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                             OR tags->'tram'   = 'yes'
                             OR tags->'bus'    = 'yes'
                           )
-                      AND  way && ST_Expand(near_pt.geom, 20000)
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                     ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                   WHEN name ILIKE @pattern    THEN 1
                                   ELSE                             2 END,
@@ -251,7 +331,7 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                     WHERE  (name ILIKE @pattern OR name % @q)
                       AND  name IS NOT NULL
                       AND  railway IN ('station', 'halt')
-                      AND  way && ST_Expand(near_pt.geom, 20000)
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                     ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                   WHEN name ILIKE @pattern    THEN 1
                                   ELSE                             2 END,
@@ -259,6 +339,60 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                     LIMIT  10
                 )
                 """;
+
+        // Category-based POI union: when input matches a known type (e.g. "bar", "café", "bäcker"),
+        // fetch the nearest POIs of that type sorted by proximity.
+        // These get type_rank = -1 so they surface above all name-based results.
+        var categoryUnion = "";
+        if (category.HasValue)
+        {
+            var (catCol, _, catPolygon) = category.Value;
+            categoryUnion = catPolygon
+                ? $"""
+
+                UNION ALL
+
+                -- category POIs: polygon type (parks, playgrounds, pools …)
+                (
+                    SELECT name,
+                           'poi'::text AS result_type,
+                           {addrExpr}  AS display_address,
+                           ST_X(ST_Centroid(ST_Transform(way, 4326))) AS lng,
+                           ST_Y(ST_Centroid(ST_Transform(way, 4326))) AS lat,
+                           -1 AS type_rank,
+                           0  AS mrank,
+                           NULL::int AS num_sort
+                    FROM   planet_osm_polygon, near_pt
+                    WHERE  {catCol} = ANY(@catValues)
+                      AND  name IS NOT NULL
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
+                    ORDER BY way <-> near_pt.geom
+                    LIMIT  20
+                )
+                """
+                : $"""
+
+                UNION ALL
+
+                -- category POIs: point type (bars, cafés, restaurants …)
+                (
+                    SELECT name,
+                           'poi'::text AS result_type,
+                           {addrExpr}  AS display_address,
+                           ST_X(ST_Transform(way, 4326)) AS lng,
+                           ST_Y(ST_Transform(way, 4326)) AS lat,
+                           -1 AS type_rank,
+                           0  AS mrank,
+                           NULL::int AS num_sort
+                    FROM   planet_osm_point, near_pt
+                    WHERE  {catCol} = ANY(@catValues)
+                      AND  name IS NOT NULL
+                      AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
+                    ORDER BY way <-> near_pt.geom
+                    LIMIT  20
+                )
+                """;
+        }
 
         // column order in result: name(0), result_type(1), display_address(2), lng(3), lat(4)
         var sql = $"""
@@ -269,16 +403,16 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                 r.name,
                 r.result_type,
                 CASE
-                    WHEN r.result_type = 'street'
+                    WHEN r.result_type IN ('street', 'transit')
                         THEN street_loc.plz_city
                     WHEN r.result_type = 'poi' AND r.display_address IS NULL
-                        THEN poi_fallback.nearest_street
+                        THEN COALESCE(poi_fallback.nearest_street, street_loc.plz_city)
                     ELSE r.display_address
                 END AS display_address,
                 r.lng,
                 r.lat
             FROM (
-                SELECT DISTINCT ON (lower(sub.name))
+                SELECT DISTINCT ON (lower(sub.name), sub.result_type)
                        sub.name,
                        sub.result_type,
                        sub.display_address,
@@ -305,7 +439,7 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                         FROM   planet_osm_point, near_pt
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  name IS NOT NULL
-                          AND  way && ST_Expand(near_pt.geom, 20000)
+                          AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                         ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                       WHEN name ILIKE @pattern    THEN 1
                                       ELSE                             2 END,
@@ -332,7 +466,7 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                             FROM   planet_osm_line, near_pt
                             WHERE  (name ILIKE @pattern OR name % @q)
                               AND  highway IS NOT NULL
-                              AND  way && ST_Expand(near_pt.geom, 20000)
+                              AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                             ORDER BY name, way <-> near_pt.geom
                         ) _streets
                         ORDER BY mrank,
@@ -358,15 +492,15 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                         WHERE  (name ILIKE @pattern OR name % @q)
                           AND  (place IS NOT NULL OR leisure IS NOT NULL
                                 OR landuse IS NOT NULL OR amenity IS NOT NULL)
-                          AND  way && ST_Expand(near_pt.geom, 20000)
+                          AND  way && ST_Expand(near_pt.geom, {AppConstants.AutocompleteSearchRadiusM})
                         ORDER BY CASE WHEN name ILIKE @startsWith THEN 0
                                       WHEN name ILIKE @pattern    THEN 1
                                       ELSE                             2 END,
                                  way <-> near_pt.geom
                         LIMIT  20
-                    ){transitUnion}{addressUnion}{streetOnlyAddressUnion}
+                    ){transitUnion}{addressUnion}{streetOnlyAddressUnion}{categoryUnion}
                 ) sub
-                ORDER BY lower(sub.name), sub.type_rank, sub.mrank, sub.num_sort NULLS LAST, prox
+                ORDER BY lower(sub.name), sub.result_type, sub.type_rank, sub.mrank, sub.num_sort NULLS LAST, prox
             ) r
 
             -- plz + city for streets via nearest address point
@@ -375,10 +509,10 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                 FROM   planet_osm_point
                 WHERE  ((tags->'addr:postcode') IS NOT NULL OR (tags->'addr:city') IS NOT NULL)
                   AND  way && ST_Expand(
-                           ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857), 5000)
+                           ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857), {AppConstants.AutocompleteFallbackRadiusM})
                 ORDER BY way <-> ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857)
                 LIMIT  1
-            ) street_loc ON (r.result_type = 'street')
+            ) street_loc ON (r.result_type IN ('street', 'transit', 'poi'))
 
             -- nearest street name for POIs without address
             LEFT JOIN LATERAL (
@@ -386,13 +520,13 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                 FROM   planet_osm_line l
                 WHERE  l.highway IS NOT NULL AND l.name IS NOT NULL
                   AND  l.way && ST_Expand(
-                           ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857), 5000)
+                           ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857), {AppConstants.AutocompleteFallbackRadiusM})
                 ORDER BY l.way <-> ST_Transform(ST_SetSRID(ST_MakePoint(r.lng, r.lat), 4326), 3857)
                 LIMIT  1
             ) poi_fallback ON (r.result_type = 'poi' AND r.display_address IS NULL)
 
-            ORDER BY r.type_rank, r.mrank, r.num_sort NULLS LAST, r.prox
-            LIMIT 5
+            ORDER BY r.prox, r.type_rank, r.mrank, r.num_sort NULLS LAST
+            LIMIT {AppConstants.AutocompleteMaxResults}
             """;
 
         await using var cmd = _db.CreateCommand(sql);
@@ -412,6 +546,9 @@ public class OsmAutocompleteService : IOsmAutocompleteService
             cmd.Parameters.AddWithValue("houseRegex",    houseRegex);
         }
 
+        if (category.HasValue)
+            cmd.Parameters.AddWithValue("catValues", category.Value.Values);
+
         var results = new List<PlaceSuggestion>();
         await using var reader = await cmd.ExecuteReaderAsync();
 
@@ -428,14 +565,65 @@ public class OsmAutocompleteService : IOsmAutocompleteService
                 Description = name,
                 Address     = string.IsNullOrWhiteSpace(address) ? null : address,
                 PlaceId     = $"{pLat.ToString(CultureInfo.InvariantCulture)},{pLng.ToString(CultureInfo.InvariantCulture)}",
-                ResultType  = resultType
+                ResultType  = resultType,
+                DistanceKm  = Math.Round(HaversineKm(lat.Value, lng.Value, pLat, pLng), 2)
             });
         }
 
-        if (_cache.Count >= CacheMaxSize)
+        if (_cache.Count >= AppConstants.AutocompleteCacheMaxSize)
             _cache.Clear();
         _cache[cacheKey] = results;
 
         return results;
+    }
+
+    // Returns the OSM category that best matches the user's input.
+    // Requires at least 3 characters. Tries exact match first, then
+    // accent-normalized prefix match (e.g. "bäck" → bäckerei, "cafe" → café).
+    private static (string Column, string[] Values, bool Polygon)? DetectCategory(string q)
+    {
+        if (q.Length < AppConstants.AutocompleteCategoryMinLength) return null;
+
+        if (CategoryMap.TryGetValue(q, out var exact)) return exact;
+
+        var normalized = NormalizeAccents(q.ToLowerInvariant());
+
+        // Prefer the shortest matching key so "res" → "restaurant" beats a longer alias.
+        (string Column, string[] Values, bool Polygon)? best = null;
+        var bestLen = int.MaxValue;
+
+        foreach (var (key, val) in CategoryMap)
+        {
+            if (key.Length >= bestLen) continue;
+            if (NormalizeAccents(key).StartsWith(normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                best    = val;
+                bestLen = key.Length;
+            }
+        }
+
+        return best;
+    }
+
+    private static double HaversineKm(double lat1, double lng1, double lat2, double lng2)
+    {
+        const double R = 6371.0;
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLng = (lng2 - lng1) * Math.PI / 180;
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2)
+              + Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180)
+              * Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
+        return R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+    }
+
+    // Strips diacritics so "cafe" matches "café", "backer" matches "bäcker", etc.
+    private static string NormalizeAccents(string s)
+    {
+        var decomposed = s.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(decomposed.Length);
+        foreach (var c in decomposed)
+            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        return sb.ToString();
     }
 }

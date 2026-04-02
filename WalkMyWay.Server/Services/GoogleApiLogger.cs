@@ -20,8 +20,8 @@ public sealed class GoogleApiLogger : IGoogleApiLogger, IDisposable
     public void LogResponse(string url, string responseBody, long elapsedMs)
     {
         var masked = MaskApiKey(url);
-        var preview = responseBody.Length > 2000
-            ? responseBody[..2000] + "…[truncated]"
+        var preview = responseBody.Length > AppConstants.ApiLogResponsePreviewLength
+            ? responseBody[..AppConstants.ApiLogResponsePreviewLength] + "…[truncated]"
             : responseBody;
         Write($"RESPONSE {masked} ({elapsedMs} ms){Environment.NewLine}{preview}");
     }

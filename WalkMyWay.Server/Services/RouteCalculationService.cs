@@ -32,7 +32,7 @@ public class RouteCalculationService : IRouteCalculationService
                 .ToList();
 
             var typeSearches = await Task.WhenAll(
-                uniqueTypes.Select(t => FindPlacesAlongRouteAsync(routePoints, t.Type, t.TotalCount + 4, false)));
+                uniqueTypes.Select(t => FindPlacesAlongRouteAsync(routePoints, t.Type, t.TotalCount + AppConstants.SearchCountBuffer, false)));
 
             // sort by route position so the greedy loop picks the earliest valid stop first,
             // leaving as much room as possible for subsequent preferences
@@ -131,9 +131,6 @@ public class RouteCalculationService : IRouteCalculationService
     private static readonly (int Radius, int RouteDistMax)[] SearchAttempts =
         [(800, 250), (1400, 400), (2200, 800)];
 
-    private const int AlternativesRadiusM = 400;
-    private const int MaxAlternatives     = 3;
-
     private async Task<List<WaypointInfo>> FindPlacesAlongRouteAsync(
         List<(double Lat, double Lng)> routePoints, string preferenceType, int maxCount, bool openNow)
     {
@@ -150,7 +147,7 @@ public class RouteCalculationService : IRouteCalculationService
         int searchRadius, int routeDistMax)
     {
         var found        = new Dictionary<string, (WaypointInfo Info, (double NeLat, double NeLng, double SwLat, double SwLng) Viewport, double AreaM2)>();
-        var samplePoints = GetSampledPoints(routePoints, 5);
+        var samplePoints = GetSampledPoints(routePoints, AppConstants.RouteSamplePoints);
 
         var candidateLists = await Task.WhenAll(
             samplePoints.Select(p => _mapProvider.SearchPlacesNearbyAsync(p.Lat, p.Lng, searchRadius, preferenceType, openNow)));
@@ -192,7 +189,7 @@ public class RouteCalculationService : IRouteCalculationService
         {
             if (selected.Count >= maxCount) break;
             bool tooClose = selected.Any(s =>
-                HaversineDistance(s.Latitude, s.Longitude, place.Latitude, place.Longitude) < 100);
+                HaversineDistance(s.Latitude, s.Longitude, place.Latitude, place.Longitude) < AppConstants.MinWaypointDistanceM);
             if (!tooClose)
                 selected.Add(place);
         }
@@ -203,8 +200,8 @@ public class RouteCalculationService : IRouteCalculationService
         {
             s.Alternatives = scored
                 .Where(x => !selectedIds.Contains(x.Place.PlaceId)
-                         && HaversineDistance(s.Latitude, s.Longitude, x.Place.Latitude, x.Place.Longitude) <= AlternativesRadiusM)
-                .Take(MaxAlternatives)
+                         && HaversineDistance(s.Latitude, s.Longitude, x.Place.Latitude, x.Place.Longitude) <= AppConstants.AlternativesRadiusM)
+                .Take(AppConstants.MaxAlternatives)
                 .Select(x => x.Place)
                 .ToList();
         }
