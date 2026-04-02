@@ -11,14 +11,20 @@ namespace WalkMyWay.Server.Controllers;
 [Route("api/[controller]")]
 public class RouteController : ControllerBase
 {
-    private readonly RouteCalculationService _routeService;
+    private readonly IRouteCalculationService _routeService;
     private readonly IMapProvider _mapProvider;
+    private readonly IOsmAutocompleteService _autocompleteService;
     private readonly ILogger<RouteController> _logger;
 
-    public RouteController(RouteCalculationService routeService, IMapProvider mapProvider, ILogger<RouteController> logger)
+    public RouteController(
+        IRouteCalculationService routeService,
+        IMapProvider mapProvider,
+        IOsmAutocompleteService autocompleteService,
+        ILogger<RouteController> logger)
     {
         _routeService = routeService;
         _mapProvider = mapProvider;
+        _autocompleteService = autocompleteService;
         _logger = logger;
     }
 
@@ -36,7 +42,7 @@ public class RouteController : ControllerBase
 
         try
         {
-            var suggestions = await _mapProvider.GetPlaceAutocompleteSuggestionsAsync(input, lat, lng);
+            var suggestions = await _autocompleteService.GetSuggestionsAsync(input, lat, lng);
             return Ok(new { suggestions });
         }
         catch (Exception ex)

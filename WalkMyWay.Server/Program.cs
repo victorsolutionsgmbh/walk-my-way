@@ -17,7 +17,7 @@ public class Program
         builder.Logging.AddConsole();
 
         builder.Services.AddControllers();
-        builder.Services.AddSingleton<GoogleApiLogger>();
+        builder.Services.AddSingleton<IGoogleApiLogger, GoogleApiLogger>();
 
         var jwtSecret = builder.Configuration["Auth:JwtSecret"]
             ?? throw new InvalidOperationException("Auth:JwtSecret is not configured.");
@@ -51,8 +51,9 @@ public class Program
         builder.Services.AddSingleton(NpgsqlDataSource.Create(csb.ToString()));
 
         builder.Services.AddHttpClient<IMapProvider, PostgresOsmProvider>();
+        builder.Services.AddSingleton<IOsmAutocompleteService, OsmAutocompleteService>();
 
-        builder.Services.AddScoped<RouteCalculationService>();
+        builder.Services.AddScoped<IRouteCalculationService, RouteCalculationService>();
 
         var app = builder.Build();
 

@@ -3,7 +3,7 @@ using WalkMyWay.Server.Models;
 
 namespace WalkMyWay.Server.Services;
 
-public class RouteCalculationService
+public class RouteCalculationService : IRouteCalculationService
 {
     private readonly IMapProvider _mapProvider;
 
@@ -24,25 +24,43 @@ public class RouteCalculationService
         {
             var prefs = request.Preferences;
 
-            // Search the FULL route for every preference so that quality-based scoring
-            // (e.g. park area) can pick the globally best candidate.
-            // We request extra candidates so the order-enforcement step has choices.
-            var prefTasks = prefs
-                .Select(pref => FindPlacesAlongRouteAsync(routePoints, pref.Type, pref.Count + 4, pref.OpenNow))
+            // one search per unique type with summed count + buffer;
+            // repeated preferences of the same type draw from the same pool so no candidates are missed
+            var uniqueTypes = prefs
+                .GroupBy(p => p.Type)
+                .Select(g => (Type: g.Key, TotalCount: g.Sum(p => p.Count)))
                 .ToList();
-            var allCandidates = await Task.WhenAll(prefTasks);
 
-            // Greedily assign stops in declared order: each next stop must appear
-            // at or after the previous stop's closest point on the route.
+            var typeSearches = await Task.WhenAll(
+                uniqueTypes.Select(t => FindPlacesAlongRouteAsync(routePoints, t.Type, t.TotalCount + 4, false)));
+
+            // sort by route position so the greedy loop picks the earliest valid stop first,
+            // leaving as much room as possible for subsequent preferences
+            var typeCandidates = new Dictionary<string, List<WaypointInfo>>();
+            for (int j = 0; j < uniqueTypes.Count; j++)
+                typeCandidates[uniqueTypes[j].Type] = typeSearches[j]
+                    .OrderBy(wp => ClosestRouteIndex(wp.Latitude, wp.Longitude, routePoints))
+                    .ThenBy(wp => wp.PlaceId)
+                    .ToList();
+
+            // greedy assignment: each next stop must be at or after the previous stop on the route;
+            // exception: if a stop is within BacktrackThresholdM of the current route position
+            // it is placed anyway and flagged as a backtrack
             var seenPlaceIds = new HashSet<string>();
             int minRouteIdx  = 0;
 
             for (int i = 0; i < prefs.Count; i++)
             {
-                int taken = 0;
-                foreach (var wp in allCandidates[i])
+                var pool     = typeCandidates[prefs[i].Type];
+                var openNow  = prefs[i].OpenNow;
+                int needed   = prefs[i].Count;
+                int taken    = 0;
+
+                // pass 1: forward candidates only (no backtrack)
+                foreach (var wp in pool)
                 {
-                    if (taken >= prefs[i].Count) break;
+                    if (taken >= needed) break;
+                    if (openNow && wp.IsOpen != true) continue;
                     var idx = ClosestRouteIndex(wp.Latitude, wp.Longitude, routePoints);
                     if (idx >= minRouteIdx && seenPlaceIds.Add(wp.PlaceId))
                     {
@@ -51,18 +69,44 @@ public class RouteCalculationService
                         taken++;
                     }
                 }
+
+                if (taken >= needed) continue;
+
+                // pass 2: allow nearby backtrack candidates only when no forward stop was found
+                foreach (var wp in pool)
+                {
+                    if (taken >= needed) break;
+                    if (openNow && wp.IsOpen != true) continue;
+                    if (seenPlaceIds.Contains(wp.PlaceId)) continue;
+                    var idx  = ClosestRouteIndex(wp.Latitude, wp.Longitude, routePoints);
+                    if (idx >= minRouteIdx) continue; // already handled in pass 1
+                    var dist = HaversineDistance(
+                        wp.Latitude, wp.Longitude,
+                        routePoints[minRouteIdx].Lat, routePoints[minRouteIdx].Lng);
+                    if (dist > AppConstants.BacktrackThresholdM) continue;
+                    if (seenPlaceIds.Add(wp.PlaceId))
+                    {
+                        wp.BacktrackRequired = true;
+                        waypoints.Add(wp);
+                        minRouteIdx = Math.Max(minRouteIdx, idx);
+                        taken++;
+                    }
+                }
             }
         }
         else
         {
-            // All preferences are independent — fetch in parallel.
-            var prefTasks = request.Preferences
-                .Select(pref => FindPlacesAlongRouteAsync(routePoints, pref.Type, pref.Count, pref.OpenNow))
+            // one search per unique type with summed count; same fix as preserveOrder path
+            var uniqueTypes = request.Preferences
+                .GroupBy(p => p.Type)
+                .Select(g => (Type: g.Key, TotalCount: g.Sum(p => p.Count), OpenNow: g.Any(p => p.OpenNow)))
                 .ToList();
 
-            var allResults  = await Task.WhenAll(prefTasks);
+            var typeSearches = await Task.WhenAll(
+                uniqueTypes.Select(t => FindPlacesAlongRouteAsync(routePoints, t.Type, t.TotalCount, t.OpenNow)));
+
             var seenPlaceIds = new HashSet<string>();
-            foreach (var places in allResults)
+            foreach (var places in typeSearches)
                 foreach (var place in places)
                     if (seenPlaceIds.Add(place.PlaceId))
                         waypoints.Add(place);
@@ -78,57 +122,69 @@ public class RouteCalculationService
                 request.CurrentLatitude, request.CurrentLongitude,
                 request.DestinationAddress, waypoints),
             DestinationAddress = routeData.EndAddress,
-            Waypoints = waypoints
+            Waypoints          = waypoints,
+            HasBacktracks      = waypoints.Any(w => w.BacktrackRequired)
         };
     }
+
+    // radius and max route-distance tolerance per attempt; each retry widens the search
+    private static readonly (int Radius, int RouteDistMax)[] SearchAttempts =
+        [(800, 250), (1400, 400), (2200, 800)];
+
+    private const int AlternativesRadiusM = 400;
+    private const int MaxAlternatives     = 3;
 
     private async Task<List<WaypointInfo>> FindPlacesAlongRouteAsync(
         List<(double Lat, double Lng)> routePoints, string preferenceType, int maxCount, bool openNow)
     {
-        var found = new Dictionary<string, (WaypointInfo Info, (double NeLat, double NeLng, double SwLat, double SwLng) Viewport, double AreaM2)>();
+        foreach (var (radius, routeDistMax) in SearchAttempts)
+        {
+            var result = await FindPlacesAttemptAsync(routePoints, preferenceType, maxCount, openNow, radius, routeDistMax);
+            if (result.Count > 0) return result;
+        }
+        return [];
+    }
+
+    private async Task<List<WaypointInfo>> FindPlacesAttemptAsync(
+        List<(double Lat, double Lng)> routePoints, string preferenceType, int maxCount, bool openNow,
+        int searchRadius, int routeDistMax)
+    {
+        var found        = new Dictionary<string, (WaypointInfo Info, (double NeLat, double NeLng, double SwLat, double SwLng) Viewport, double AreaM2)>();
         var samplePoints = GetSampledPoints(routePoints, 5);
 
-        // All sample-point searches are independent — run in parallel.
         var candidateLists = await Task.WhenAll(
-            samplePoints.Select(p => _mapProvider.SearchPlacesNearbyAsync(p.Lat, p.Lng, 800, preferenceType, openNow)));
+            samplePoints.Select(p => _mapProvider.SearchPlacesNearbyAsync(p.Lat, p.Lng, searchRadius, preferenceType, openNow)));
 
         foreach (var candidates in candidateLists)
-        {
             foreach (var c in candidates)
-            {
                 if (!found.ContainsKey(c.PlaceId))
-                {
                     found[c.PlaceId] = (new WaypointInfo
                     {
-                        PlaceId = c.PlaceId,
-                        Name = c.Name,
-                        Type = preferenceType,
-                        Address = c.Address,
-                        Rating = c.Rating,
+                        PlaceId          = c.PlaceId,
+                        Name             = c.Name,
+                        Type             = preferenceType,
+                        Address          = c.Address,
+                        Rating           = c.Rating,
                         UserRatingsTotal = c.UserRatingsTotal,
-                        Latitude = c.Latitude,
-                        Longitude = c.Longitude,
-                        IsOpen = c.IsOpen
+                        Latitude         = c.Latitude,
+                        Longitude        = c.Longitude,
+                        IsOpen           = c.IsOpen
                     }, c.Viewport, c.AreaM2);
-                }
-            }
-        }
 
+        // for parks prefer larger polygons; thenby placeid ensures deterministic ordering on equal score
         var scored = found.Values
             .Select(entry =>
             {
                 var routeDist  = MinRouteDistanceBounded(
                     entry.Info.Latitude, entry.Info.Longitude, entry.Viewport, routePoints);
-                // For parks, prefer larger polygons: log10(area_m²/1000 + 2) gives a
-                // multiplier of ~0.3 for tiny parks (100 m²) up to ~3.5 for large ones (1 km²).
                 var areaFactor = preferenceType is "park" or "parks" && entry.AreaM2 > 0
                     ? Math.Log10(entry.AreaM2 / 1000.0 + 2.0)
                     : 1.0;
-                var composite  = routeDist / areaFactor;
-                return (Place: entry.Info, RouteDist: routeDist, Composite: composite);
+                return (Place: entry.Info, RouteDist: routeDist, Composite: routeDist / areaFactor);
             })
-            .Where(x => x.RouteDist <= 250)
+            .Where(x => x.RouteDist <= routeDistMax)
             .OrderBy(x => x.Composite)
+            .ThenBy(x => x.Place.PlaceId)
             .ToList();
 
         var selected = new List<WaypointInfo>();
@@ -140,6 +196,19 @@ public class RouteCalculationService
             if (!tooClose)
                 selected.Add(place);
         }
+
+        // attach nearby unselected candidates as alternatives
+        var selectedIds = selected.Select(s => s.PlaceId).ToHashSet();
+        foreach (var s in selected)
+        {
+            s.Alternatives = scored
+                .Where(x => !selectedIds.Contains(x.Place.PlaceId)
+                         && HaversineDistance(s.Latitude, s.Longitude, x.Place.Latitude, x.Place.Longitude) <= AlternativesRadiusM)
+                .Take(MaxAlternatives)
+                .Select(x => x.Place)
+                .ToList();
+        }
+
         return selected;
     }
 

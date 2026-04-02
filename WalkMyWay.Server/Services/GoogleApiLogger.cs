@@ -1,6 +1,6 @@
 namespace WalkMyWay.Server.Services;
 
-public sealed class GoogleApiLogger : IDisposable
+public sealed class GoogleApiLogger : IGoogleApiLogger, IDisposable
 {
     private readonly string _logDirectory;
     private readonly object _lock = new();

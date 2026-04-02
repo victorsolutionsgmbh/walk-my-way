@@ -184,7 +184,7 @@ export default function App() {
     };
 
     // ── Preferences ──────────────────────────────────────────────────────────────
-    const MAX_STOPS  = 4;
+    const MAX_STOPS  = 40;
     const totalStops = preferences.reduce((sum, p) => sum + p.count, 0);
 
     const addPreference = () => {

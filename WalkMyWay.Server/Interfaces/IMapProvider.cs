@@ -7,7 +7,6 @@ public interface IMapProvider
     Task<string> ReverseGeocodeAsync(double lat, double lng);
     Task<RouteData> GetWalkingRouteAsync(double originLat, double originLng, string destination);
     Task<List<PlaceCandidate>> SearchPlacesNearbyAsync(double lat, double lng, int radiusMeters, string type, bool openNow);
-    Task<List<PlaceSuggestion>> GetPlaceAutocompleteSuggestionsAsync(string input, double? lat, double? lng);
     string BuildNavigationUrl(double originLat, double originLng, string destination, List<WaypointInfo> waypoints);
 }
 
@@ -21,7 +20,7 @@ public class PlaceSuggestion
     public string  Description { get; set; } = string.Empty;
     public string? Address     { get; set; }
     public string  PlaceId     { get; set; } = string.Empty;
-    public string? ResultType  { get; set; }  // "address" | "poi" | "street"
+    public string? ResultType  { get; set; }
 }
 
 public record PlaceCandidate(
@@ -33,6 +32,6 @@ public record PlaceCandidate(
     double Latitude,
     double Longitude,
     (double NeLat, double NeLng, double SwLat, double SwLng) Viewport,
-    double AreaM2 = 0,      // polygon area in approx. m² (0 for point features)
-    bool?  IsOpen = null    // null = no opening_hours data; true/false = open/closed now
+    double AreaM2 = 0,
+    bool?  IsOpen = null
 );
