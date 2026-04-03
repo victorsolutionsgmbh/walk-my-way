@@ -26,6 +26,7 @@
     "find_button": "Route berechnen",
     "calculating": "Route wird berechnet\u2026",
     "error_no_destination": "Bitte gib eine Zieladresse ein.",
+    "error_no_stops": "Bitte füge mindestens einen Stopp hinzu, bevor du eine Route berechnest.",
     "error_failed": "Route konnte nicht berechnet werden.",
     "error_server": "Verbindung zum Server fehlgeschlagen. Bitte versuche es erneut."
   },

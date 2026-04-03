@@ -26,6 +26,7 @@
     "find_button": "Find Route",
     "calculating": "Calculating Route\u2026",
     "error_no_destination": "Please enter a destination address.",
+    "error_no_stops": "Please add at least one stop before finding a route.",
     "error_failed": "Failed to calculate route.",
     "error_server": "Unable to connect to the server. Please try again."
   },

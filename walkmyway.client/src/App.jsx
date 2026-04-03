@@ -256,6 +256,7 @@ export default function App() {
     // ── Route ────────────────────────────────────────────────────────────────────
     const handleFindRoute = async () => {
         if (!destination.trim()) { setError(t('route.error_no_destination')); return; }
+        if (preferences.length === 0) { setError(t('route.error_no_stops')); return; }
         setError(null);
         setIsLoading(true);
         setRouteResult(null);
