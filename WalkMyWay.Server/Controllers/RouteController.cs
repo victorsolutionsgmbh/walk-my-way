@@ -76,6 +76,9 @@ public class RouteController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
+        if (request.Preferences == null || !request.Preferences.Any())
+            return BadRequest(new { error = "At least one stop must be specified." });
+
         if (request.Preferences.Any(p => p.Count < 1))
             return BadRequest(new { error = "Each stop must have a count of at least 1." });
 
